@@ -1,0 +1,115 @@
+---
+title: "Health Informatio System project "
+author: "Bettinzoli Nicola"
+date: "2024-06-18"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introdution
+
+The purpose of this report is to analyse the current state and the evolution of the air quality in the region of Lombardy. The ultimate objective is to identify which areas are more polluted 
+  
+
+# Library used
+
+```{r library, ECHO = FALSE}
+suppressPackageStartupMessages({
+  library(dplyr)
+  library(ggplot2)
+  library(tidyr)
+})
+```
+
+# Datasets used
+
+
+## Dati sensori aria
+
+
+<!-- import of the dataset of the readings  -->
+```{r}
+df <- read.csv("./datasets/sensor_readings.csv")
+head(df)
+```
+
+<!-- check on the structure of the dataset -->
+```{r}
+summary(df)
+```
+
+
+## Dati stazioni qualità dell'aria
+
+
+<!-- import the dataset of the station used -->
+```{r}
+df_stations <- read.csv("./datasets/station_dataset.csv")
+head(df_stations)
+```
+
+<!-- check the structure of the dataset -->
+```{r}
+summary(df_stations)
+```
+
+
+# Cleaning and manipuleting the datasets
+
+## Check for NA records
+
+<!-- check how many records in the dataset are NA  -->
+```{r}
+table(df$Stato, useNA = "always")
+```
+<!-- double check on the "Valore" field -->
+```{r}
+length(which(df$Valore == -9999))
+```
+
+<!-- drop Na rows -->
+```{r, ECHO = FALSE}
+df <- drop_na(df)
+```
+
+
+<!-- split the "Data" column into date and time -->
+```{r}
+dates <- df$Data
+```
+
+```{r}
+dates <- format(dates,format = "%d/%m/%Y %H:%M:%S")
+```
+
+```{r}
+times <- format(as.POSIXct(dates), format = "%H:%M:%S")
+```
+
+```{r}
+times
+```
+
+<!-- insert the new features into the dataset -->
+```{r}
+df$Date <- dates
+
+df$Times <- times
+```
+
+<!-- remove the operator column -->
+```{r}
+df %>% subset(select = -Data)
+```
+
+
+# Analyses
+
+
+# Conclusions
+
+
+
