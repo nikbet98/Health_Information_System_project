@@ -8,7 +8,6 @@ output: pdf_document
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
-
 # Introdution
 
 The purpose of this report is to analyse the current state and the evolution of the air quality in the region of Lombardy. The ultimate objective is to identify which areas are more polluted 
@@ -33,29 +32,18 @@ suppressPackageStartupMessages({
 <!-- import of the dataset of the readings  -->
 ```{r}
 df <- read.csv("./datasets/sensor_readings.csv")
-head(df)
-```
-
-<!-- check on the structure of the dataset -->
-```{r}
-summary(df)
+str(df)
 ```
 
 
 ## Dati stazioni qualità dell'aria
 
 
-<!-- import the dataset of the station used -->
+<!-- import the dataset of the station used and look at its structure -->
 ```{r}
 df_stations <- read.csv("./datasets/station_dataset.csv")
-head(df_stations)
+str(df_stations)
 ```
-
-<!-- check the structure of the dataset -->
-```{r}
-summary(df_stations)
-```
-
 
 # Cleaning and manipuleting the datasets
 
@@ -75,6 +63,7 @@ length(which(df$Valore == -9999))
 df <- drop_na(df)
 ```
 
+## Date feature
 
 <!-- split the "Data" column into date and time -->
 ```{r}
@@ -82,29 +71,53 @@ dates <- df$Data
 ```
 
 ```{r}
-dates <- format(dates,format = "%d/%m/%Y %H:%M:%S")
+dates <- format(as.POSIXct(dates, format="%d/%m/%Y %H:%M:%S"))
 ```
 
 ```{r}
-times <- format(as.POSIXct(dates), format = "%H:%M:%S")
+times <- as.integer(format(as.POSIXct(dates), format = "%H:%M:%S"), format = "%H")
 ```
 
 ```{r}
-times
+dates <- as.Date(dates)
 ```
 
 <!-- insert the new features into the dataset -->
 ```{r}
-df$Date <- dates
+df$Dates <- dates
 
 df$Times <- times
 ```
 
-<!-- remove the operator column -->
+<!-- remove the useless column column -->
 ```{r}
-df %>% subset(select = -Data)
+df <- subset(df, select = -c(Data,idOperatore,Stato))
 ```
 
+<!-- change the name of the id column, this for compatibility reason with the other dataset -->
+```{r}
+df <- rename(df,"IdSensore" = "idSensore")
+```
+
+<!-- check if all the ids of the first dataset exist in the second -->
+```{r}
+ids <- df$IdSensore
+for (id in ids){
+  if (!(id %in% df_stations$IdSensore))
+    print("sensor "+id+" not present in the dataset")
+}
+  
+```
+
+<!-- join the two dataset based on the "IdSensore" feature -->
+```{r}
+df <- left_join(df,df_stations, by = "IdSensore")
+```
+
+<!-- remove some column that are not relevant -->
+```{r}
+df <- subset(df, select = -c(NomeStazione,Storico))
+```
 
 # Analyses
 
