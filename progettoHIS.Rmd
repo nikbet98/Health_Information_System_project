@@ -10,7 +10,7 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 # Introdution
 
-The purpose of this report is to analyse the current state and the evolution of the air quality in the region of Lombardy. The ultimate objective is to identify which areas are more polluted 
+The purpose of this report is to analyse the current state and the evolution of the air quality in the region of Lombardy. During this study i will analize the various concentration of the pollutants in the air and try to identify pattern or trend of the territory.  
   
 
 # Library used
@@ -28,12 +28,21 @@ suppressPackageStartupMessages({
 
 ## Dati sensori aria
 
+The main dataset utilized is the one containing all the sensor readings, this dataset can be downloaded from <https://www.dati.lombardia.it/Ambiente/Dati-sensori-aria-dal-2018/g2hp-ar79/about_data>. Let's try to have a look
 
 <!-- import of the dataset of the readings  -->
 ```{r}
 df <- read.csv("./datasets/sensor_readings.csv")
+head(df)
+```
+
+And the structure
+```{r}
 str(df)
 ```
+
+
+In this dataset each row rappresent a sensor reading, each reading is described by: The id of the sensor, the date, the value, the state and the id of the operator.
 
 
 ## Dati stazioni qualità dell'aria
