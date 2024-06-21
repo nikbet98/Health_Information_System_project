@@ -44,7 +44,6 @@ str(df)
 
 In this dataset each row rappresent a sensor reading, each reading is described by: The id of the sensor, the date, the value, the state and the id of the operator.
 
-
 ## Dati stazioni qualità dell'aria
 
 
@@ -126,6 +125,64 @@ df <- left_join(df,df_stations, by = "IdSensore")
 <!-- remove some column that are not relevant -->
 ```{r}
 df <- subset(df, select = -c(NomeStazione,Storico))
+```
+
+<!-- check the value in the dataset -->
+```{r}
+df %>% group_by(NomeTipoSensore) %>% summarize(
+  min = min(Valore),
+  max = max(Valore),
+  mean = mean(Valore),
+  quant25 = quantile(Valore, probs = 0.25),
+  quant50 = quantile(Valore, probs = 0.50),
+  quant75 = quantile(Valore, probs = 0.75)
+)
+```
+
+Some value are negative, probably there was some error with the sensor, and there are some strange value way higher than the quant75.
+
+So it might be necessary to discharge some record.
+
+<!-- remove all records with negative value -->
+```{r, echo=FALSE}
+df <- df %>% filter(Valore > 0)
+```
+
+<!-- detect outlier -->
+```{r}
+remove_outlier <- function(df){
+  
+  category <- unique(df$NomeTipoSensore) 
+  
+  for (c in category){
+    values <- df$Valore[df$NomeTipoSensore == c]
+    
+    quantile25 <- quantile(values, probs = 0.25)
+    
+    
+    quantile75 <- quantile(values, probs = 0.75)
+    
+    IQR <- quantile75 - quantile25
+    
+    df <- df %>% filter(!(NomeTipoSensore == c & (Valore > quantile75 + (IQR * 1.5) | Valore < quantile25 - (IQR * 1.5))))
+  }
+  return(df)
+}
+```
+
+```{r}
+df <- remove_outlier(df)
+```
+
+```{r}
+df %>% group_by(NomeTipoSensore) %>% summarize(
+  min = min(Valore),
+  max = max(Valore),
+  mean = mean(Valore),
+  quant25 = quantile(Valore, probs = 0.25),
+  quant50 = quantile(Valore, probs = 0.50),
+  quant75 = quantile(Valore, probs = 0.75)
+)
 ```
 
 # Analyses
