@@ -19,7 +19,10 @@ The purpose of this report is to analyse the current state and the evolution of 
 suppressPackageStartupMessages({
   library(dplyr)
   library(ggplot2)
+  library(ggmap)
   library(tidyr)
+  library(patchwork)
+  library(data.table)
 })
 ```
 
@@ -97,6 +100,12 @@ df$Dates <- dates
 df$Times <- times
 ```
 
+<!-- keep only the hour -->
+```{r}
+df$Times <- as.integer(format(as.POSIXct(df$Times, format = "%H:%M:%S"), format = "%H"))
+```
+
+
 <!-- remove the useless column column -->
 ```{r}
 df <- subset(df, select = -c(Data,idOperatore,Stato))
@@ -150,6 +159,17 @@ df <- df %>% filter(Valore > 0)
 
 <!-- detect outlier -->
 ```{r}
+p <- ggplot(df) +
+  aes(x = "", y = Valore) +
+  geom_boxplot(fill = "steelblue") + 
+  theme_minimal()
+
+p + facet_wrap(vars(NomeTipoSensore),scales = "free_y")
+
+```
+  
+  <!-- remove outlier -->
+```{r}
 remove_outlier <- function(df){
   
   category <- unique(df$NomeTipoSensore) 
@@ -174,6 +194,17 @@ remove_outlier <- function(df){
 df <- remove_outlier(df)
 ```
 
+<!-- boxplots again but after the outlier got removed -->
+```{r}
+p <- ggplot(df) +
+  aes(x = "", y = Valore) +
+  geom_boxplot(fill = "steelblue") + 
+  theme_minimal()
+
+p + facet_wrap(vars(NomeTipoSensore),scales = "free_y")
+```
+
+
 ```{r}
 df %>% group_by(NomeTipoSensore) %>% summarize(
   min = min(Valore),
@@ -185,7 +216,159 @@ df %>% group_by(NomeTipoSensore) %>% summarize(
 )
 ```
 
+
 # Analyses
+
+
+<!-- to check:  Biossido di Azoto, Monossido di Azoto, Ossidi di Azoto, Biossido di Zolfo, Monossido di Carbonio, Ozono, PM10 (SM2005), Particelle sospese PM2.5 -->
+
+<!-- pollutans of interest -->
+```{r}
+pollutans <- c("Biossido di Azoto", "Monossido di Azoto", "Ossidi di Azoto", "Biossido di Zolfo", "Monossido di Carbonio", "Ozono", "PM10 (SM2005)", "Particelle sospese PM2.5")
+```
+
+```{r}
+df <- df %>% filter(NomeTipoSensore %in% pollutans)
+```
+
+
+
+<!-- small dataframe with only the stations and their location -->
+```{r}
+station <- df %>% subset(select = c(Idstazione,lat,lng,Utm_Nord,UTM_Est,Quota)) %>% group_by(Idstazione) %>% summarise(lat = mean(lat), lng = mean(lng), Utm_Nord = mean(Utm_Nord),UTM_Est = mean(UTM_Est), Quota = mean(Quota))
+```
+
+<!-- api key for using stadia maps -->
+```{r}
+register_stadiamaps(api_key, write = FALSE)
+```
+
+
+<!-- plot the station on a map -->
+```{r}
+qmplot(x=lng,y=lat,data = station, source = "stadia",maptype = "stamen_toner_lite", color = I("red"))
+```
+<!-- piechart of the various pollutants readings and sensors -->
+```{r}
+sensor_count <- df_stations %>% group_by(NomeTipoSensore) %>%  filter(NomeTipoSensore %in% pollutans & IdSensore %in% df$IdSensore) %>% summarise(n = n())
+
+ggplot(sensor_count, aes(x="", y=n, fill=NomeTipoSensore)) +
+  geom_bar(stat="identity", width=1, color="white") +
+  coord_polar("y", start=0) +
+  
+  theme_void()
+```
+
+
+
+```{r}
+raeadings_count <- df %>% group_by(NomeTipoSensore) %>% summarise(n = n())
+ggplot(raeadings_count, aes(x="", y=n, fill=NomeTipoSensore)) +
+  geom_bar(stat="identity", width=1, color="white") +
+  coord_polar("y", start=0) +
+  
+  theme_void()
+```
+```{r}
+df$Dates <- df$Dates %>% as.Date()
+```
+
+
+```{r}
+df$Year <- df$Dates %>% format("%Y")
+
+df$Month <- df$Dates %>% format("%m")
+
+df$DayOfTheWeek <- df$Dates %>% weekdays()
+```
+
+<!-- annual averages -->
+```{r}
+annual_averages <- df %>% 
+  subset(select = c(NomeTipoSensore,Valore,Year)) %>% 
+  filter(Year < 2024) %>%
+  pivot_wider(names_from = NomeTipoSensore, values_from = Valore, values_fn = mean)
+```
+
+```{r}
+years <- 2018:2023
+annual_averages <- setDT(annual_averages)
+mtab = melt(annual_averages, id.vars="Year")
+
+mtab$Year = factor(mtab$Year, levels=c(years))
+
+p <- ggplot(data=mtab, aes(x=Year, y=value, fill=Year)) + 
+  geom_bar(stat="identity") +
+  scale_fill_viridis_d() +
+  facet_wrap(vars(variable),scales = "free_y")
+
+ggsave("faceted_barplot.png", plot=p, width=7.5, height=5, dpi=150)
+```
+
+<!-- month averages -->
+```{r}
+month_averages <- df %>% 
+  subset(select = c(NomeTipoSensore,Valore,Month)) %>% 
+  pivot_wider(names_from = NomeTipoSensore, values_from = Valore, values_fn = mean)
+
+month_averages$Month <- as.integer(month_averages$Month)
+```
+
+```{r}
+months <- 1:12
+month_averages <- setDT(month_averages)
+mtab = melt(month_averages, id.vars="Month")
+
+mtab$Month = factor(mtab$Month, levels=c(months))
+
+p <- ggplot(data=mtab, aes(x=Month, y=value, fill=Month)) + 
+  geom_bar(stat="identity") +
+  scale_fill_viridis_d() +
+  facet_wrap(vars(variable),scales = "free_y")
+
+ggsave("months.png", plot=p, width=7.5, height=5, dpi=150)
+```
+
+
+<!-- day averages -->
+```{r}
+day_averages <- df %>% 
+  subset(select = c(NomeTipoSensore,Valore,DayOfTheWeek)) %>% 
+  pivot_wider(names_from = NomeTipoSensore, values_from = Valore, values_fn = mean)
+
+```
+
+```{r}
+days <- day_averages$DayOfTheWeek
+day_averages <- setDT(day_averages)
+mtab = melt(day_averages, id.vars="DayOfTheWeek")
+
+mtab$DayOfTheWeek = factor(mtab$DayOfTheWeek, levels=c(days))
+
+p <- ggplot(data=mtab, aes(x=DayOfTheWeek, y=value, fill=DayOfTheWeek)) + 
+  geom_bar(stat="identity") +
+  scale_fill_viridis_d() +
+  facet_wrap(vars(variable),scales = "free_y")
+
+ggsave("days.png", plot=p, width=7.5, height=5, dpi=150)
+```
+
+
+<!-- plot of the evolution of a polluntans -->
+```{r}
+df_25 <- df %>% filter(NomeTipoSensore == "Particelle sospese PM2.5" & Provincia == "BS")
+df_25 <- df_25 %>% arrange(Dates)
+df_25 <- df_25 %>% filter(Dates < as.Date("2021/01/01") & Dates > as.Date("2019/12/31"))
+df_25$Dates <- df_25$Dates %>% as.Date()
+```
+
+```{r}
+options(repr.plot.width = 10, repr.plot.height =2) 
+ggplot(df_25) +
+  aes(x=Dates, y=Valore) +
+  geom_line(color = "red") +
+  geom_smooth()
+```
 
 
 # Conclusions
