@@ -263,11 +263,15 @@ ggplot(sensor_count, aes(x="", y=n, fill=NomeTipoSensore)) +
 
 ```{r}
 raeadings_count <- df %>% group_by(NomeTipoSensore) %>% summarise(n = n())
-ggplot(raeadings_count, aes(x="", y=n, fill=NomeTipoSensore)) +
+p <- ggplot(raeadings_count, aes(x="", y=n, fill=NomeTipoSensore)) + 
   geom_bar(stat="identity", width=1, color="white") +
   coord_polar("y", start=0) +
   
   theme_void()
+
+p
+
+ggsave("readings_count_pie.png", plot=p, width=7.5, height=5, dpi=150)
 ```
 ```{r}
 df$Dates <- df$Dates %>% as.Date()
@@ -346,11 +350,59 @@ mtab = melt(day_averages, id.vars="DayOfTheWeek")
 mtab$DayOfTheWeek = factor(mtab$DayOfTheWeek, levels=c(days))
 
 p <- ggplot(data=mtab, aes(x=DayOfTheWeek, y=value, fill=DayOfTheWeek)) + 
-  geom_bar(stat="identity") +
+  geom_bar(stat="identity")
   scale_fill_viridis_d() +
   facet_wrap(vars(variable),scales = "free_y")
 
 ggsave("days.png", plot=p, width=7.5, height=5, dpi=150)
+```
+
+<!-- hour averages -->
+```{r}
+hours <- 0:23
+hour_averages <- df %>% 
+  subset(select = c(NomeTipoSensore,Valore,Times)) %>% 
+  pivot_wider(names_from = NomeTipoSensore, values_from = Valore, values_fn = mean)
+
+```
+
+```{r}
+hour_averages <- setDT(hour_averages)
+mtab = melt(hour_averages, id.vars="Times")
+
+mtab$Times = factor(mtab$Times, levels=c(hours))
+
+p <- ggplot(data=mtab, aes(x=Times, y=value, fill=Times)) + 
+  geom_bar(stat="identity") +
+  scale_fill_viridis_d() +
+  facet_wrap(vars(variable),scales = "free_y")
+
+p
+ggsave("hours.png", plot=p, width=13, height=7, dpi=150)
+```
+
+<!-- averages for each province -->
+```{r}
+provinces <- unique(df$Provincia)
+provinces_averages <- df %>% 
+  subset(select = c(NomeTipoSensore,Valore,Provincia)) %>% 
+  pivot_wider(names_from = NomeTipoSensore, values_from = Valore, values_fn = mean)
+
+```
+
+```{r}
+provinces_averages <- setDT(provinces_averages)
+mtab = melt(provinces_averages, id.vars="Provincia")
+
+mtab$Provincia = factor(mtab$Provincia, levels=c(provinces))
+
+p <- ggplot(data=mtab, aes(x=Provincia, y=value, fill=Provincia)) + 
+  geom_bar(stat="identity") +
+  scale_fill_viridis_d() +
+  facet_wrap(vars(variable),scales = "free_y")
+
+p
+ggsave("./image/provinces.png", plot=p, width=13, height=7, dpi=150)
 ```
 
 
