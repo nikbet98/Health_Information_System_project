@@ -23,6 +23,7 @@ suppressPackageStartupMessages({
   library(tidyr)
   library(patchwork)
   library(data.table)
+  library(ggridges)
 })
 ```
 
@@ -239,7 +240,9 @@ station <- df %>% subset(select = c(Idstazione,lat,lng,Utm_Nord,UTM_Est,Quota)) 
 ```
 
 <!-- api key for using stadia maps -->
+
 ```{r}
+api_key <- readLines("stadia_key.txt")
 register_stadiamaps(api_key, write = FALSE)
 ```
 
@@ -248,25 +251,52 @@ register_stadiamaps(api_key, write = FALSE)
 ```{r}
 qmplot(x=lng,y=lat,data = station, source = "stadia",maptype = "stamen_toner_lite", color = I("red"))
 ```
+
+```{r}
+p <- ggmap(map) + 
+  geom_density_2d_filled(data = station, 
+                         aes(x=lng, y=lat, alpha = 0.3))
+p
+ggsave("./image/stations_desnity.png", plot=p, width=13, height=7, dpi=300)
+```
+
 <!-- piechart of the various pollutants readings and sensors -->
 ```{r}
-sensor_count <- df_stations %>% group_by(NomeTipoSensore) %>%  filter(NomeTipoSensore %in% pollutans & IdSensore %in% df$IdSensore) %>% summarise(n = n())
+sensor_count <- df_stations %>% 
+  group_by(NomeTipoSensore) %>%  
+  filter(NomeTipoSensore %in% pollutans & IdSensore %in% df$IdSensore) %>% 
+  summarise(n = n())
+
+total <- sum(sensor_count$n)
+  
+sensor_count$perc <- sensor_count$n / total
+sensor_count$perc <- sprintf("%1.2f%%", 100*sensor_count$perc)
+  
 
 ggplot(sensor_count, aes(x="", y=n, fill=NomeTipoSensore)) +
   geom_bar(stat="identity", width=1, color="white") +
   coord_polar("y", start=0) +
-  
+  geom_text(aes(label = perc), position = position_stack(vjust=0.5)) +
   theme_void()
 ```
 
 
 
 ```{r}
-raeadings_count <- df %>% group_by(NomeTipoSensore) %>% summarise(n = n())
+raeadings_count <- df %>% 
+  group_by(NomeTipoSensore) %>% 
+  summarise(n = n())
+
+total <- sum(raeadings_count$n)
+  
+raeadings_count$perc <- raeadings_count$n / total
+raeadings_count$perc <- sprintf("%1.2f%%", 100*raeadings_count$perc)
+  
+
 p <- ggplot(raeadings_count, aes(x="", y=n, fill=NomeTipoSensore)) + 
   geom_bar(stat="identity", width=1, color="white") +
   coord_polar("y", start=0) +
-  
+  geom_text(aes(label = perc), position = position_stack(vjust=0.5)) +
   theme_void()
 
 p
@@ -404,22 +434,181 @@ p <- ggplot(data=mtab, aes(x=Provincia, y=value, fill=Provincia)) +
 p
 ggsave("./image/provinces.png", plot=p, width=13, height=7, dpi=150)
 ```
-
-
-<!-- plot of the evolution of a polluntans -->
+<!-- temporal evolution -->
 ```{r}
-df_25 <- df %>% filter(NomeTipoSensore == "Particelle sospese PM2.5" & Provincia == "BS")
-df_25 <- df_25 %>% arrange(Dates)
-df_25 <- df_25 %>% filter(Dates < as.Date("2021/01/01") & Dates > as.Date("2019/12/31"))
-df_25$Dates <- df_25$Dates %>% as.Date()
+value_means <- function(df, pollutan){
+  temp <- filter(df,df$NomeTipoSensore == pollutan)
+  temp <- temp %>% subset(select = c(Dates,Valore)) %>% group_by(Dates) %>% summarise(value = mean(Valore))
+  return(temp)
+}
 ```
 
 ```{r}
-options(repr.plot.width = 10, repr.plot.height =2) 
-ggplot(df_25) +
-  aes(x=Dates, y=Valore) +
-  geom_line(color = "red") +
-  geom_smooth()
+for (c in pollutans){
+  temp <- value_means(df,c)
+  p <- ggplot(temp) + 
+    aes(x=Dates, y=value, title(c)) +
+    geom_line(color = "red") +
+    geom_smooth()
+  path <- paste("./image/",gsub(" ","",c),".png",sep="")
+  ggsave(path, plot=p, width=20, height=10, dpi=150)
+}
+```
+
+<!-- check the most polluted city -->
+```{r}
+cities <- unique(df$Comune)
+cities_averages <- df %>% 
+  subset(select = c(NomeTipoSensore,Valore,Comune)) %>% 
+  pivot_wider(names_from = NomeTipoSensore, values_from = Valore, values_fn = mean)
+
+```
+
+<!-- top 10 foreach pollutans -->
+```{r}
+for (c in pollutans){
+  temp <- df %>% 
+    subset(select = c(NomeTipoSensore,Valore,Comune)) %>% 
+    filter(NomeTipoSensore == c) %>%
+    group_by(Comune) %>%
+    summarise(average = mean(Valore)) %>%
+    arrange(desc(average)) %>%
+    head(10)
+  
+  p <- ggplot(temp) +
+    aes(x=factor(Comune, level=c(Comune)), y=average, fill = Comune) +
+    geom_bar(stat="identity") +
+    scale_fill_viridis_d() +
+    ggtitle(c) +
+    theme(plot.title = element_text(hjust = 0.5))
+  path <- paste("./image/top_10_",gsub(" ","",c),".png",sep="")
+  ggsave(path, plot=p, width=20, height=10, dpi=150)
+}
+```
+
+<!-- heatmap -->
+```{r}
+prova <- df %>% 
+  filter(NomeTipoSensore == "Particelle sospese PM2.5") %>% 
+  subset(select = c(lat,lng,Valore) )
+```
+
+```{r}
+bb <- getbb("Lombardia")
+map <- get_stadiamap(bbox = c(bb[1,1],bb[2,1],bb[1,2],bb[2,2]), maptype = "alidade_smooth")
+```
+
+```{r}
+p <- ggmap(map) + 
+  geom_density_2d_filled(data = prova, 
+                         aes(x=lng, y=lat, alpha = 0.3))
+
+ggsave("prova.png", plot=p, width=13, height=7, dpi=300)
+```
+
+
+```{r}
+ggmap(map)
+```
+```{r}
+month_averages <- df %>% 
+  subset(select = c(NomeTipoSensore,Valore,Month)) %>% 
+  pivot_wider(names_from = NomeTipoSensore, values_from = Valore, values_fn = mean)
+
+month_averages$Month <- as.integer(month_averages$Month)
+
+months <- 1:12
+month_averages <- setDT(month_averages)
+mtab = melt(month_averages, id.vars="Month")
+
+mtab$Month = factor(mtab$Month, levels=c(months))
+```
+
+
+```{r}
+ggplot(mtab, aes(x = value, y = variable, fill = variable)) +
+  geom_density_ridges() +
+  scale_x_continuous(expand = c(0.01, 0)) +
+  scale_y_discrete(expand = c(0.01, 0)) +
+  scale_fill_viridis_d()
+ 
+```
+```{r}
+prova<- prova %>% mutate(across(c(lat, lng), round, digits = 4))
+```
+
+
+```{r}
+
+p <- ggmap(map) + 
+  geom_point(data = prova,mapping = aes(x = lng, y = lat, size = mean, color = mean, alpha = 0.4)) +
+  scale_color_gradientn(colors = rainbow(5)) +
+  scale_fill_viridis_d() +
+  guides(size = FALSE, alpha = FALSE)
+p
+ggsave("pm25.png", plot=p, width=13, height=7, dpi=300)
+
+```
+
+https://dati.comune.milano.it/dataset/ds686-rilevazione-temperature-anno-2018
+
+<!-- load the dataset of Milan's temps and clean it -->
+```{r}
+milan_temps <- read.csv("./datasets/milano_temps.csv", sep = ";", na.strings = " ")
+milan_temps <- drop_na(milano_temps)
+milan_temps$Media <- gsub(",", ".", milano_temps$Media)
+milan_temps$Media <- as.numeric(milano_temps$Media)
+milan_temps$Data.Ora <- as.Date(milano_temps$Data.Ora, format = "%d/%m/%Y %H:%M")
+milan_temps <- milano_temps %>% group_by(Data.Ora) %>% summarise(Media = mean(Media))
+```
+
+
+```{r}
+milan_2018 <- df %>% filter(Dates < "2019/01/01" & Provincia == "MI")
+```
+
+<!-- pollutants and the temperature plots side by side -->
+```{r}
+for (c in pollutans){
+  temp <- value_means(milan_2018,c)
+  p <- ggplot(temp) + 
+    aes(x=Dates, y=value, title(c)) +
+    geom_line(color = "red") +
+    geom_smooth() +
+    ggplot(data = milano_temps,
+              aes(x=Data.Ora, y = Media, color = "green")) +
+    geom_smooth()
+  path <- paste("./image/",gsub(" ","",c),".png",sep="")
+  ggsave(path, plot=p, width=20, height=10, dpi=150)
+}
+```
+
+<!-- annual and daily mean vs WHO guidelines -->
+```{r}
+ggplot(annual_averages) +
+  aes(x=Year, y=`Particelle sospese PM2.5`, group = 1) +
+  geom_line() +
+  geom_hline(yintercept=25, linetype="dashed", color = "red") +
+  geom_hline(yintercept=15, linetype="dashed", color = "red") +
+  geom_hline(yintercept=10, linetype="dashed", color = "red")
+
+```
+
+```{r}
+averages <- df %>% 
+  filter(NomeTipoSensore == "Particelle sospese PM2.5") %>%
+  group_by(Dates) %>% 
+  summarise(mean = mean(Valore))
+
+ggplot(averages) +
+  aes(x=Dates, y=mean, group = 1) +
+  geom_line() +
+  geom_hline(yintercept=75, linetype="dashed", color = "red") +
+  geom_hline(yintercept=50, linetype="dashed", color = "red") +
+  geom_hline(yintercept=37.5, linetype="dashed", color = "red") +
+  geom_hline(yintercept=25, linetype="dashed", color = "red")
+
+
 ```
 
 

@@ -3,7 +3,7 @@
 ## Analisi zone
 
 - [x] Valore medio di un inquinante per ciascuna città/provincia
-- [ ] Città più iquinata per ciascun inquinante
+- [x] Città più iquinata per ciascun inquinante
 - [ ] Overall città più pulita/inquinata facendo una media su i vari valori
 - [ ] Cercare valori consigliati o per le soglie dei vari inquinanti
 - [ ] Analisi in base all'altitudine vedere se cambia qualcosa
@@ -20,6 +20,7 @@
     - [x] Media per mese
     - [x] Media per giorno della settimana
     - [x] Media per ora del giorno (no pm)
+- [x] Confronto temperature e inquinanti (solo provincia di milano nel 2018)
 
 ## Mappe
 
