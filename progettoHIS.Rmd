@@ -10,8 +10,7 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 # Introdution
 
-The purpose of this report is to analyse the current state and the evolution of the air quality in the region of Lombardy. During this study i will analize the various concentration of the pollutants in the air and try to identify pattern or trend of the territory.  
-  
+The purpose of this report is to analyse the current state and the evolution of the air quality in the region of Lombardy. During this study i will analize the various concentration of the pollutants in the air and try to identify pattern or trend of the territory and confronting this value with the guidelines and safety value establish by the WHO.
 
 # Library used
 
@@ -32,7 +31,10 @@ suppressPackageStartupMessages({
 
 ## Dati sensori aria
 
-The main dataset utilized is the one containing all the sensor readings, this dataset can be downloaded from <https://www.dati.lombardia.it/Ambiente/Dati-sensori-aria-dal-2018/g2hp-ar79/about_data>. Let's try to have a look
+The main dataset utilized is the one containing all the sensor readings, this dataset can be downloaded from the site of the region <https://www.dati.lombardia.it/Ambiente/Dati-sensori-aria-dal-2018/g2hp-ar79/about_data>.
+This readings come from the ARPA Lombardy's air quality detection network, this stations automatically read and send back the values of some pollutants of interest. In particular the pollutants continuously monitored are: NOX, SO2, CO, O3, PM10, PM2.5 and Benzene from the 2018 to the 2023.
+
+Let's try to have a look.
 
 <!-- import of the dataset of the readings  -->
 ```{r}
@@ -46,16 +48,35 @@ str(df)
 ```
 
 
-In this dataset each row rappresent a sensor reading, each reading is described by: The id of the sensor, the date, the value, the state and the id of the operator.
+This dataset consist in more of 17 million records, each of it represents a sensor reading, each reading is described by 4 values: idSensore, Data, Valore, Stato, idOperatore.
 
+The first is simply the ID associate to the sensor, it's an integer value.
+
+The "Date" value indicate the date and the time in whitch the readings was done.
+
+The "Stato" value indicate if the record is valid: in the case of "VA" there is no problem, in the case of "NA" the record is not valid, this can be seen also from the "Valore" feature that, in that case, is set to -9999.
+
+This dataset does not indicate us directly what was the pollutants associated with the readings, for this will be necessary the next dataset that will be utilized to associate the pollutant to the sensor.
+  
 ## Dati stazioni qualità dell'aria
 
+This dataset describe and contains information about the stations and their sensors. All the data can be downloaded from the site of the region <https://www.dati.lombardia.it/Ambiente/Stazioni-qualit-dell-aria/ib47-atvt/about_data>. The main function of this dataset will be to complement the information seen before.
 
 <!-- import the dataset of the station used and look at its structure -->
 ```{r}
 df_stations <- read.csv("./datasets/station_dataset.csv")
 str(df_stations)
 ```
+From this dataset we will take some important information like: the pollutants analized from the sensor, the geographical location of it, not only his latitude and longitude, but also the city, the province and the altitude; another useful information will be the unit of measurement of the value read by the sensor.
+
+
+## Dataset temperature medie milano extra
+
+This dataset can be downloaded from the site of the municipality of Milan <https://dati.comune.milano.it/dataset/ds686-rilevazione-temperature-anno-2018> and will be utilized in combination with the previous ones during the study to try to find some connection between the  temperature and the emissions. For this we will focus only on the city of Milan in the year of 2018, this because the information about the temperature were not available for all the region.
+
+## Additional Data
+
+Beside the dataset we will take in consideration also the guidelines established by the WHO fro the target value and the safety value for the pollutants, this can be found directly from the publication <https://www.who.int/publications/i/item/9789240034228>, where the old guidelines (from 15 years ago) has been update thanks to the better knowledge on the effect from the exposure of these pollutants on the human system for prolunged time.
 
 # Cleaning and manipuleting the datasets
 
@@ -225,7 +246,7 @@ df %>% group_by(NomeTipoSensore) %>% summarize(
 
 <!-- pollutans of interest -->
 ```{r}
-pollutans <- c("Biossido di Azoto", "Monossido di Azoto", "Ossidi di Azoto", "Biossido di Zolfo", "Monossido di Carbonio", "Ozono", "PM10 (SM2005)", "Particelle sospese PM2.5")
+pollutans <- c("Biossido di Azoto", "Monossido di Azoto", "Ossidi di Azoto", "Biossido di Zolfo", "Monossido di Carbonio", "Ozono", "PM10 (SM2005)", "Particelle sospese PM2.5", "Benzene")
 ```
 
 ```{r}
@@ -584,13 +605,23 @@ for (c in pollutans){
 ```
 
 <!-- annual and daily mean vs WHO guidelines -->
+
+
+<!-- PM2.5 recommended leve and target values -->
 ```{r}
+
 ggplot(annual_averages) +
   aes(x=Year, y=`Particelle sospese PM2.5`, group = 1) +
   geom_line() +
-  geom_hline(yintercept=25, linetype="dashed", color = "red") +
-  geom_hline(yintercept=15, linetype="dashed", color = "red") +
-  geom_hline(yintercept=10, linetype="dashed", color = "red")
+  geom_hline(aes(yintercept=35, linetype="Interim target 1"), color = "red", size = 1) +
+  geom_hline(aes(yintercept=25, linetype="Interim target 2"), color = "orange", size = 1) +
+  geom_hline(aes(yintercept=15, linetype="Interim target 3"), color = "purple", size = 1) +
+  geom_hline(aes(yintercept=10, linetype="Interim target 4"), color = "blue", size = 1) +
+  geom_hline(aes(yintercept=5, linetype="AQG level"), color = "green", size = 1) +
+  scale_linetype_manual(name ="", values = c('dashed','dashed','dashed','dashed','dashed')) +
+  ggtitle("Recommended annual PM2.5 level") +
+  ylab(expression(µg/m^{3})) +
+  theme(plot.title = element_text(hjust = 0.5))
 
 ```
 
@@ -603,14 +634,124 @@ averages <- df %>%
 ggplot(averages) +
   aes(x=Dates, y=mean, group = 1) +
   geom_line() +
-  geom_hline(yintercept=75, linetype="dashed", color = "red") +
-  geom_hline(yintercept=50, linetype="dashed", color = "red") +
-  geom_hline(yintercept=37.5, linetype="dashed", color = "red") +
-  geom_hline(yintercept=25, linetype="dashed", color = "red")
-
+  geom_hline(aes(yintercept=75, linetype="Interim target 1"), color = "red", size = 1) +
+  geom_hline(aes(yintercept=50, linetype="Interim target 2"), color = "orange", size = 1) +
+  geom_hline(aes(yintercept=37.5, linetype="Interim target 3"), color = "purple", size = 1) +
+  geom_hline(aes(yintercept=25, linetype="Interim target 4"), color = "blue", size = 1) +
+  geom_hline(aes(yintercept=15, linetype="AQG level"), color = "green", size = 1) +
+  scale_linetype_manual(name ="", values = c('dashed','dashed','dashed','dashed','dashed')) +
+  ggtitle("Recommended short-term (24-hour) PM2.5 level") +
+  ylab(expression(µg/m^{3})) +
+  theme(plot.title = element_text(hjust = 0.5))
 
 ```
 
+<!-- PM10 recommended leve and target values -->
+```{r}
+ggplot(annual_averages) +
+  aes(x=Year, y=`PM10 (SM2005)`, group = 1) +
+  geom_line() +
+  geom_hline(aes(yintercept=70, linetype="Interim target 1"), color = "red", size = 1) +
+  geom_hline(aes(yintercept=50, linetype="Interim target 2"), color = "orange", size = 1) +
+  geom_hline(aes(yintercept=30, linetype="Interim target 3"), color = "purple", size = 1) +
+  geom_hline(aes(yintercept=20, linetype="Interim target 4"), color = "blue", size = 1) +
+  geom_hline(aes(yintercept=15, linetype="AQG level"), color = "green", size = 1) +
+  scale_linetype_manual(name ="", values = c('dashed','dashed','dashed','dashed','dashed')) +
+  ggtitle("Recommended annual PM10 level") +
+  ylab(expression(µg/m^{3})) +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+```{r}
+averages <- df %>% 
+  filter(NomeTipoSensore == "PM10 (SM2005)") %>%
+  group_by(Dates) %>% 
+  summarise(mean = mean(Valore))
+
+ggplot(averages) +
+  aes(x=Dates, y=mean, group = 1) +
+  geom_line() +
+  geom_hline(aes(yintercept=150, linetype="Interim target 1"), color = "red", size = 1) +
+  geom_hline(aes(yintercept=100, linetype="Interim target 2"), color = "orange", size = 1) +
+  geom_hline(aes(yintercept=75, linetype="Interim target 3"), color = "purple", size = 1) +
+  geom_hline(aes(yintercept=50, linetype="Interim target 4"), color = "blue", size = 1) +
+  geom_hline(aes(yintercept=45, linetype="AQG level"), color = "green", size = 1) +
+  scale_linetype_manual(name ="", values = c('dashed','dashed','dashed','dashed','dashed')) +
+  ggtitle("Recommended short-term (24-hour) PM10 level") +
+  ylab(expression(µg/m^{3})) +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+
+
+
+<!-- CO recommended leve and target values -->
+```{r}
+averages <- df %>% 
+  filter(NomeTipoSensore == "Monossido di Carbonio") %>%
+  group_by(Dates) %>% 
+  summarise(mean = mean(Valore))
+
+ggplot(averages) +
+  aes(x=Dates, y=mean, group = 1) +
+  geom_line() +
+  geom_hline(aes(yintercept=7, linetype="Interim target 1"), color = "red", size = 1) +
+  geom_hline(aes(yintercept=4, linetype="AQG level"), color = "green", size = 1) +
+
+  scale_linetype_manual(name ="", values = c('dashed','dashed','dashed','dashed','dashed')) +
+  ggtitle("Recommended short-term (24-hour) CO level") +
+  ylab(expression(mg/m^{3})) +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+<!-- NO2 recommended level and target values -->
+```{r}
+ggplot(annual_averages) +
+  aes(x=Year, y=`Biossido di Azoto`, group = 1) +
+  geom_line() +
+  geom_hline(aes(yintercept=120, linetype="Interim target 1"), color = "red", size = 1) +
+  geom_hline(aes(yintercept=50, linetype="Interim target 2"), color = "blue", size = 1) +
+  geom_hline(aes(yintercept=25, linetype="AQG level"), color = "green", size = 1) +
+  scale_linetype_manual(name ="", values = c('dashed','dashed','dashed')) +
+  ggtitle("Recommended annual NO2 level") +
+  ylab(expression(µg/m^{3})) +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+```{r}
+averages <- df %>% 
+  filter(NomeTipoSensore == "Biossido di Azoto") %>%
+  group_by(Dates) %>% 
+  summarise(mean = mean(Valore))
+
+ggplot(averages) +
+  aes(x=Dates, y=mean, group = 1) +
+  geom_line() +
+  geom_hline(aes(yintercept=40, linetype="Interim target 1"), color = "red", size = 1) +
+  geom_hline(aes(yintercept=30, linetype="Interim target 2"), color = "orange", size = 1) +
+  geom_hline(aes(yintercept=20, linetype="Interim target 3"), color = "blue", size = 1) +
+  geom_hline(aes(yintercept=10, linetype="AQC level"), color = "green", size = 1) +
+  scale_linetype_manual(name ="", values = c('dashed','dashed','dashed','dashed')) +
+  ggtitle("Recommended short-term (24-hour) NO2 level") +
+  ylab(expression(µg/m^{3})) +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+<!-- SO2 recommended level and target values -->
+```{r}
+averages <- df %>% 
+  filter(NomeTipoSensore == "Biossido di Zolfo") %>%
+  group_by(Dates) %>% 
+  summarise(mean = mean(Valore))
+
+ggplot(averages) +
+  aes(x=Dates, y=mean, group = 1) +
+  geom_line() +
+  geom_hline(aes(yintercept=125, linetype="Interim target 1"), color = "red", size = 1) +
+  geom_hline(aes(yintercept=50, linetype="Interim target 2"), color = "orange", size = 1) +
+  geom_hline(aes(yintercept=40, linetype="AQC level"), color = "green", size = 1) +
+  scale_linetype_manual(name ="", values = c('dashed','dashed','dashed')) +
+  ggtitle("Recommended short-term (24-hour) SO2 level") +
+  ylab(expression(µg/m^{3})) +
+  theme(plot.title = element_text(hjust = 0.5))
+```
 
 # Conclusions
 
