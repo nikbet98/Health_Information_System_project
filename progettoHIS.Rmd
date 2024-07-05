@@ -23,6 +23,8 @@ suppressPackageStartupMessages({
   library(patchwork)
   library(data.table)
   library(ggridges)
+  library(geodata)
+  library(sf)
 })
 ```
 
@@ -67,7 +69,7 @@ This dataset describe and contains information about the stations and their sens
 df_stations <- read.csv("./datasets/station_dataset.csv")
 str(df_stations)
 ```
-From this dataset we will take some important information like: the pollutants analized from the sensor, the geographical location of it, not only his latitude and longitude, but also the city, the province and the altitude; another useful information will be the unit of measurement of the value read by the sensor.
+From this dataset we will take some important information like: the pollutants analized by the sensor, the geographical location of it, not only his latitude and longitude, but also the city, the province and the altitude; another useful information will be the unit of measurement of the value read by the sensor.
 
 
 ## Dataset temperature medie milano extra
@@ -507,6 +509,42 @@ for (c in pollutans){
 }
 ```
 
+<!-- checking the altitude -->
+
+<!-- mapping the altitude into bands so it easier to plot -->
+```{r}
+df$Aprx_altitude <- df$Quota %>% {case_when(. > 0 & . < 50 ~ 50,
+                                   . > 50 & . < 100 ~ 100,
+                                   . > 100 & . < 150 ~ 150,
+                                   . > 150 & . < 200 ~ 200,
+                                   . > 200 & . < 300 ~ 300,
+                                   . > 300 & . < 400 ~ 400,
+                                   . > 400 ~ 1000)}
+```
+
+```{r}
+altitudes <- c(50,100,150,200,300,400,1000)
+altitudes_average <- df %>% 
+  subset(select = c(NomeTipoSensore,Valore,Aprx_altitude)) %>% 
+  pivot_wider(names_from = NomeTipoSensore, values_from = Valore, values_fn = mean)
+
+```
+
+```{r}
+altitudes_average <- setDT(altitudes_average)
+mtab = melt(altitudes_average, id.vars="Aprx_altitude")
+
+mtab$Aprx_altitude = factor(mtab$Aprx_altitude, levels=c(altitudes))
+
+p <- ggplot(data=mtab, aes(x=Aprx_altitude, y=value, fill=Aprx_altitude)) + 
+  geom_bar(stat="identity") +
+  scale_fill_viridis_d() +
+  facet_wrap(vars(variable),scales = "free_y")
+
+p
+ggsave("image/Aprx_altitude.png", plot=p, width=13, height=7, dpi=300)
+```
+
 <!-- heatmap -->
 ```{r}
 prova <- df %>% 
@@ -547,27 +585,47 @@ mtab$Month = factor(mtab$Month, levels=c(months))
 
 
 ```{r}
-ggplot(mtab, aes(x = value, y = variable, fill = variable)) +
-  geom_density_ridges() +
-  scale_x_continuous(expand = c(0.01, 0)) +
-  scale_y_discrete(expand = c(0.01, 0)) +
-  scale_fill_viridis_d()
- 
-```
-```{r}
 prova<- prova %>% mutate(across(c(lat, lng), round, digits = 4))
 ```
 
 
+<!-- get the map -->
 ```{r}
+lombardy_region <- gadm(country = "Italy", level = 2, path = "./") %>%
+  st_as_sf() %>%
+  filter(NAME_1 == "Lombardia")
+```
+<!-- adding the full name enabling the join -->
+```{r}
+NAME_2 <- c("Milano",
+            "Bergamo",
+            "Monza and Brianza",
+            "Varese",
+            "Como",
+            "Sondrio",
+            "Lecco",
+            "Lodi",
+            "Cremona",
+            "Pavia",
+            "Brescia",
+            "Mantua")
 
-p <- ggmap(map) + 
-  geom_point(data = prova,mapping = aes(x = lng, y = lat, size = mean, color = mean, alpha = 0.4)) +
-  scale_color_gradientn(colors = rainbow(5)) +
-  scale_fill_viridis_d() +
-  guides(size = FALSE, alpha = FALSE)
-p
-ggsave("pm25.png", plot=p, width=13, height=7, dpi=300)
+provinces_averages$NAME_2 <- NAME_2
+```
+
+```{r}
+map_with_value <- left_join(lombardy_region, provinces_averages, by = "NAME_2")
+
+for (c in pollutans){
+   p <- ggplot(map_with_value) + 
+     geom_sf(aes(fill = map_with_value[[c]])) + 
+     scale_fill_gradient(low = "#a7b4e8",high = "#2e408c", name = c) + 
+     ggtitle(c) + 
+     theme(plot.title = element_text(hjust = 0.5))
+   
+   path <- paste("./image/map",gsub(" ","",c),".png",sep="")
+   ggsave(path, plot=p, dpi=300)
+}
 
 ```
 
@@ -752,6 +810,8 @@ ggplot(averages) +
   ylab(expression(µg/m^{3})) +
   theme(plot.title = element_text(hjust = 0.5))
 ```
+
+
 
 # Conclusions
 

@@ -6,7 +6,7 @@
 - [x] Città più iquinata per ciascun inquinante
 - [ ] Overall città più pulita/inquinata facendo una media su i vari valori
 - [x] Cercare valori consigliati o per le soglie dei vari inquinanti
-- [ ] Analisi in base all'altitudine vedere se cambia qualcosa
+- [x] Analisi in base all'altitudine vedere se cambia qualcosa
 - [x] Grafico a torta delle rilevazioni/sensori per inquinanate
 
 ## analisi evolizione temporale
@@ -24,7 +24,7 @@
 
 ## Mappe
 
-- [ ] Mappa per ciascun inquinante
-    - [ ] Mappa con slider temporale se si riesce
+- [x] Mappa per ciascun inquinante
+    - [ ] Mappa con slider temporale se si riesce (casino meglio di no)
 - [x] Mappa distribuzione stazioni
     - [ ] Mappa densità abitativa per comparare la distribuzione di stazioni
