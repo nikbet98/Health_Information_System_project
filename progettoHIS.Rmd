@@ -1,12 +1,24 @@
 ---
-title: "Health Informatio System project "
+title: 'Health Informatio System project '
 author: "Bettinzoli Nicola"
 date: "2024-06-18"
+header-includes:
+- \usepackage{pdflscape}
+- \newcommand{\blandscape}{\begin{landscape}}
+- \newcommand{\elandscape}{\end{landscape}}
 output: pdf_document
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  cache = TRUE,
+  fig.align = 'center',
+  dpi = 500,
+  cache.lazy = FALSE
+)
 ```
 # Introdution
 
@@ -25,13 +37,15 @@ suppressPackageStartupMessages({
   library(ggridges)
   library(geodata)
   library(sf)
+  library(osmdata)
+  library(gridExtra)
 })
 ```
 
 # Datasets used
 
 
-## Dati sensori aria
+## Dataset air quality sensors
 
 The main dataset utilized is the one containing all the sensor readings, this dataset can be downloaded from the site of the region <https://www.dati.lombardia.it/Ambiente/Dati-sensori-aria-dal-2018/g2hp-ar79/about_data>.
 This readings come from the ARPA Lombardy's air quality detection network, this stations automatically read and send back the values of some pollutants of interest. In particular the pollutants continuously monitored are: NOX, SO2, CO, O3, PM10, PM2.5 and Benzene from the 2018 to the 2023.
@@ -44,13 +58,23 @@ df <- read.csv("./datasets/sensor_readings.csv")
 head(df)
 ```
 
+
+The feature "idOperatore", probably refers to the organisation/institution that provided the data, which is always set to 1 is not of interest so we just drop it
+
+
+```{r}
+df <- subset(df, select = -c(idOperatore))
+```
+
+
 And the structure
+
 ```{r}
 str(df)
 ```
 
 
-This dataset consist in more of 17 million records, each of it represents a sensor reading, each reading is described by 4 values: idSensore, Data, Valore, Stato, idOperatore.
+This dataset consist in more of 17 million records, each of it represents a sensor reading, each reading is described by 4 values: idSensore, Data, Valore, Stato.
 
 The first is simply the ID associate to the sensor, it's an integer value.
 
@@ -58,148 +82,291 @@ The "Date" value indicate the date and the time in whitch the readings was done.
 
 The "Stato" value indicate if the record is valid: in the case of "VA" there is no problem, in the case of "NA" the record is not valid, this can be seen also from the "Valore" feature that, in that case, is set to -9999.
 
-This dataset does not indicate us directly what was the pollutants associated with the readings, for this will be necessary the next dataset that will be utilized to associate the pollutant to the sensor.
+And finally the "Valore" attribute contain the value read by the sensor in that time.
+
+Its important to note that this dataset does not indicate us directly what was the pollutants associated with the readings, for this will be necessary the next dataset that will be utilized to associate the pollutant to the sensor.
   
-## Dati stazioni qualità dell'aria
+## Air quality stations dataset
 
 This dataset describe and contains information about the stations and their sensors. All the data can be downloaded from the site of the region <https://www.dati.lombardia.it/Ambiente/Stazioni-qualit-dell-aria/ib47-atvt/about_data>. The main function of this dataset will be to complement the information seen before.
+
 
 <!-- import the dataset of the station used and look at its structure -->
 ```{r}
 df_stations <- read.csv("./datasets/station_dataset.csv")
-str(df_stations)
+head(df_stations)
 ```
+
+
 From this dataset we will take some important information like: the pollutants analized by the sensor, the geographical location of it, not only his latitude and longitude, but also the city, the province and the altitude; another useful information will be the unit of measurement of the value read by the sensor.
 
 
-## Dataset temperature medie milano extra
+```{r}
+df_stations <- df_stations %>% subset(select = -c(NomeStazione, 
+                                                  Storico, 
+                                                  DataStart, 
+                                                  DataStop,
+                                                  Location,
+                                                  UTM_Est,
+                                                  Utm_Nord))
+```
+
+
+## Milan temperature dataset
 
 This dataset can be downloaded from the site of the municipality of Milan <https://dati.comune.milano.it/dataset/ds686-rilevazione-temperature-anno-2018> and will be utilized in combination with the previous ones during the study to try to find some connection between the  temperature and the emissions. For this we will focus only on the city of Milan in the year of 2018, this because the information about the temperature were not available for all the region.
 
+
+```{r}
+milan_temps <- read.csv("./datasets/milano_temps.csv", sep = ";", na.strings = " ")
+```
+
+
+In this case, for a correct reading of the dataset, specifying the separator and the NA value is necessary.
+
+
+```{r}
+head(milan_temps)
+```
+
+
+```{r}
+str(milan_temps)
+```
+
+
+
+
 ## Additional Data
 
-Beside the dataset we will take in consideration also the guidelines established by the WHO fro the target value and the safety value for the pollutants, this can be found directly from the publication <https://www.who.int/publications/i/item/9789240034228>, where the old guidelines (from 15 years ago) has been update thanks to the better knowledge on the effect from the exposure of these pollutants on the human system for prolunged time.
+Beside the datasets we will take in consideration also the guidelines established by the WHO for the target value and the safety values for the pollutants, this can be found directly from the publication <https://www.who.int/publications/i/item/9789240034228>, where the old guidelines (from 15 years ago) has been update thanks to the better knowledge on the effect from the exposure of these pollutants on the human system for prolonged time.
+
 
 # Cleaning and manipuleting the datasets
 
+## Renaming features and pollutants
+
+First of all, let us rename all attributes and pollutants for better readability
+
+
+<!-- renaming all the features -->
+```{r}
+df <- df %>% rename("IdSensor" = "idSensore",
+                    "Date" = "Data",
+                    "Value" = "Valore",
+                    "State" = "Stato")
+```
+
+```{r}
+df_stations <- df_stations %>% rename("IdSensor" = "IdSensore",
+                                      "Type" = "NomeTipoSensore",
+                                      "Unit" = "UnitaMisura",
+                                      "IdStation" = "Idstazione",
+                                      "Altitude" = "Quota",
+                                      "Province" = "Provincia",
+                                      "Municipality" = "Comune")
+```
+
+
+Then we translate the type of the sensor in the station the dataset
+
+
+```{r}
+df_stations$Type <- df_stations$Type %>% case_match(
+  "Monossido di Azoto" ~ "Nitrogen Monoxide", 
+  "Biossido di Azoto" ~ "Nitrogen Dioxide",
+  "Ossidi di Azoto" ~ "Nitrogen Oxides",
+  "Biossido di Zolfo" ~ "Sulfur Dioxide",
+  "Monossido di Carbonio" ~ "Carbon Monoxide",
+  "Ozono" ~ "Ozone",
+  "PM10 (SM2005)" ~ "PM10",
+  "Particelle sospese PM2.5" ~ "PM2.5",
+  "Benzene" ~ "Benzene",
+   .default = "NA")
+```
+
+
 ## Check for NA records
+
+Then we are gonna check how many records inside the dataset are not valid, this are the first to be discarded as they are not useful for our studies and also their mensuration are marked as an error with the value **-9999**. 
+
 
 <!-- check how many records in the dataset are NA  -->
 ```{r}
-table(df$Stato, useNA = "always")
+table(df$State, useNA = "always")
 ```
 <!-- double check on the "Valore" field -->
 ```{r}
-length(which(df$Valore == -9999))
+length(which(df$Value == -9999))
 ```
+
+As you can see the number of appearances of the value -9999 is equal to the number of NA record.
+
+Since we already have enough data all this record will be simply discharge. 
 
 <!-- drop Na rows -->
 ```{r, ECHO = FALSE}
 df <- drop_na(df)
 ```
 
-## Date feature
 
-<!-- split the "Data" column into date and time -->
-```{r}
-dates <- df$Data
-```
-
-```{r}
-dates <- format(as.POSIXct(dates, format="%d/%m/%Y %H:%M:%S"))
-```
-
-```{r}
-times <- as.integer(format(as.POSIXct(dates), format = "%H:%M:%S"), format = "%H")
-```
-
-```{r}
-dates <- as.Date(dates)
-```
-
-<!-- insert the new features into the dataset -->
-```{r}
-df$Dates <- dates
-
-df$Times <- times
-```
-
-<!-- keep only the hour -->
-```{r}
-df$Times <- as.integer(format(as.POSIXct(df$Times, format = "%H:%M:%S"), format = "%H"))
-```
-
+And then we remove the state attribute that is no longer needed.
 
 <!-- remove the useless column column -->
 ```{r}
-df <- subset(df, select = -c(Data,idOperatore,Stato))
+df <- subset(df, select = -c(State))
 ```
 
-<!-- change the name of the id column, this for compatibility reason with the other dataset -->
-```{r}
-df <- rename(df,"IdSensore" = "idSensore")
-```
+## Joining the two dataset
+
+The next step is to merge the two datasets to complete the information of the first and make better consideration on the records. 
+
+First of all we check that all the sensors inside the first dataset exist also in the second 
 
 <!-- check if all the ids of the first dataset exist in the second -->
 ```{r}
-ids <- df$IdSensore
+ids <- df$IdSensor
 for (id in ids){
-  if (!(id %in% df_stations$IdSensore))
+  if (!(id %in% df_stations$IdSensor))
     print("sensor "+id+" not present in the dataset")
 }
   
 ```
 
+And then we use the **left_join** function to merge the information of the second dataset into the first, in this way we will have all the information needed into one dataset, like the type of the pollutants analyses, the location, etc.
+
 <!-- join the two dataset based on the "IdSensore" feature -->
-```{r}
-df <- left_join(df,df_stations, by = "IdSensore")
+```{r join_datasets, echo=FALSE}
+df <- left_join(df,df_stations, by = "IdSensor")
 ```
 
-<!-- remove some column that are not relevant -->
+
+In this study not all the pollutants will be take in consideration but only the one that were monitored continuously by the stations, as indicated in the site of the region.
+
+
+<!-- pollutants of interest -->
 ```{r}
-df <- subset(df, select = -c(NomeStazione,Storico))
+pollutans <- c("Nitrogen Dioxide",
+               "Nitrogen Monoxide", 
+               "Nitrogen Oxides", 
+               "Sulfur Dioxide", 
+               "Carbon Monoxide", 
+               "Ozone",
+               "PM10", 
+               "PM2.5", 
+               "Benzene")
 ```
+
+So we just discard the rest.
+
+```{r}
+df <- df %>% filter(Type %in% pollutans)
+df_stations <- df_stations %>% filter(Type %in% pollutans)
+```
+
+## Date feature
+
+To be usable the **"Data"** feature has to be converted to a common format, and then read as a date. Also the date and the time will be splitted into two separate features, in this way it will be easier to work with it.
+
+
+<!-- split the "Data" column into date and time -->
+```{r, eval=FALSE}
+dates <- df$Date
+```
+
+
+Convert the string values into date specifying the format, since in the dataset the Italian format is used (dd/mm/yyyy), but the normal is needed.
+
+
+```{r, eval=FALSE}
+dates <- format(as.POSIXct(dates, format="%d/%m/%Y %H:%M:%S"))
+```
+
+
+For what concerned the time only the hour will be saved, since all the readings are done hourly, minutes and seconds are always at 0. 
+
+
+```{r, eval=FALSE}
+times <- as.integer(format(as.POSIXct(dates), format = "%H"))
+```
+
+<!-- insert the new features into the dataset -->
+```{r, eval=FALSE}
+df$Date <- as.Date(dates)
+
+df$Time <- times
+```
+
+
+Finally, for making easier the work during the analysis, to the dataset will be added three features: the year, the month and the day of the week, extracted directly from the date field. 
+
+
+```{r, eval=FALSE}
+df$Year <- df$Date %>% format("%Y")
+
+df$Month <- df$Date %>% format("%m")
+
+df$DayOfTheWeek <- df$Date %>% weekdays()
+```
+
+## Outlier
+
+The next step is to check for outlier inside of the dataset
 
 <!-- check the value in the dataset -->
 ```{r}
-df %>% group_by(NomeTipoSensore) %>% summarize(
-  min = min(Valore),
-  max = max(Valore),
-  mean = mean(Valore),
-  quant25 = quantile(Valore, probs = 0.25),
-  quant50 = quantile(Valore, probs = 0.50),
-  quant75 = quantile(Valore, probs = 0.75)
+df %>% group_by(Type) %>% summarize(
+  min = min(Value),
+  max = max(Value),
+  mean = mean(Value),
+  quant25 = quantile(Value, probs = 0.25),
+  quant50 = quantile(Value, probs = 0.50),
+  quant75 = quantile(Value, probs = 0.75)
 )
 ```
+<!-- ![result](./image/outlier_print_1.png) -->
 
-Some value are negative, probably there was some error with the sensor, and there are some strange value way higher than the quant75.
+Some value are negative, probably there was some error with the sensor, and there are some strange value way higher than the quant75. For example in the nitrogen oxides the min value is -0.3 and the max is equal to 1747.4, but in we look at the quant75 value is 56.1, way lower that the max observed.
 
 So it might be necessary to discharge some record.
 
+First of all the records with negative value are discarded.
+
 <!-- remove all records with negative value -->
-```{r, echo=FALSE}
-df <- df %>% filter(Valore > 0)
+```{r}
+df <- df %>% filter(Value > 0)
 ```
 
 <!-- detect outlier -->
 ```{r}
 p <- ggplot(df) +
-  aes(x = "", y = Valore) +
-  geom_boxplot(fill = "steelblue") + 
-  theme_minimal()
+  aes(x = "", y = Value) +
+  geom_boxplot(fill = "steelblue") +
+  xlab(" ")
 
-p + facet_wrap(vars(NomeTipoSensore),scales = "free_y")
-
+p <- p + facet_wrap(vars(Type),scales = "free_y")
+p
+ggsave("./image/outlier_1.png", plot=p, dpi=300)
 ```
-  
-  <!-- remove outlier -->
+<!-- ![result](./image/outlier_1.png) -->
+
+To detect and remove the outlier we use the IQR (Iterquantile ranges), which describe the middle 50% of values when ordered from the lowest to the highest, this value will be used to calculate the threshold to determine which record to keep and discard. 
+The IQR is calculated as the difference between the the third (quant75) and the first (quant25) quartile.
+
+$$ IQR = Q_3 - Q_1 $$
+ 
+Then this value is utilized the determine the threshold by multiplying it with a constant, for example in 
+this case for 1.5.
+
+
+<!-- remove outlier -->
 ```{r}
 remove_outlier <- function(df){
   
-  category <- unique(df$NomeTipoSensore) 
+  category <- unique(df$Type) 
   
   for (c in category){
-    values <- df$Valore[df$NomeTipoSensore == c]
+    values <- df$Value[df$Type == c]
     
     quantile25 <- quantile(values, probs = 0.25)
     
@@ -208,7 +375,7 @@ remove_outlier <- function(df){
     
     IQR <- quantile75 - quantile25
     
-    df <- df %>% filter(!(NomeTipoSensore == c & (Valore > quantile75 + (IQR * 1.5) | Valore < quantile25 - (IQR * 1.5))))
+    df <- df %>% filter(!(Type == c & (Value > quantile75 + (IQR * 1.5))))
   }
   return(df)
 }
@@ -221,73 +388,125 @@ df <- remove_outlier(df)
 <!-- boxplots again but after the outlier got removed -->
 ```{r}
 p <- ggplot(df) +
-  aes(x = "", y = Valore) +
+  aes(x = "", y = Value) +
   geom_boxplot(fill = "steelblue") + 
-  theme_minimal()
+  xlab("")
 
-p + facet_wrap(vars(NomeTipoSensore),scales = "free_y")
+p <- p + facet_wrap(vars(Type),scales = "free_y")
+p
+ggsave("./image/outlier_2.png", plot=p, dpi=300)
+
+```
+
+<!-- ![result](./image/outlier_2.png) -->
+
+We can also have a look at the new min/max/mean values after the removal of the outlier.
+
+```{r, echo=FALSE}
+df %>% group_by(Type) %>% summarize(
+  min = min(Value),
+  max = max(Value),
+  mean = mean(Value),
+  quant25 = quantile(Value, probs = 0.25),
+  quant50 = quantile(Value, probs = 0.50),
+  quant75 = quantile(Value, probs = 0.75)
+)
 ```
 
 
+As we can see now the max values are less distant from the mean, and they are not to far away from the quant75. 
+
+Siamo partiti con più di 17 milioni di rilevazioni, adesso finita la pulizia siamo a circa 15 milioni.
+
 ```{r}
-df %>% group_by(NomeTipoSensore) %>% summarize(
-  min = min(Valore),
-  max = max(Valore),
-  mean = mean(Valore),
-  quant25 = quantile(Valore, probs = 0.25),
-  quant50 = quantile(Valore, probs = 0.50),
-  quant75 = quantile(Valore, probs = 0.75)
-)
+nrow(df)
+```
+
+
+## Cleanng the tempertature datastes
+
+Finally, with regard to the temperature dataset, some modifications were necessary: first of all it was necessary, during the reading for a correct interpretation, to specify the separator and the null term, after which it was also necessary to replace the separator between the integer and the decimals with the dot, for a correct conversion then to float type data (necessary for subsequent operations), and finally, ,like with the previous dataset, we convert the Data.ora attribute as a date type.
+
+
+
+<!-- load the dataset of Milan's temps and clean it -->
+```{r}
+milan_temps <- drop_na(milan_temps)
+milan_temps$Media <- gsub(",", ".", milan_temps$Media)
+milan_temps$Media <- as.numeric(milan_temps$Media)
+milan_temps$Data.Ora <- as.Date(milan_temps$Data.Ora, format = "%d/%m/%Y %H:%M")
+```
+
+
+Of this dataset only the necessary information such as date and temperature were kept, of these then the daily average was taken.
+
+
+```{r}
+milan_temps <- milan_temps %>% group_by(Data.Ora) %>% summarise(Media = mean(Media))
 ```
 
 
 # Analyses
 
+## Distribution
 
-<!-- to check:  Biossido di Azoto, Monossido di Azoto, Ossidi di Azoto, Biossido di Zolfo, Monossido di Carbonio, Ozono, PM10 (SM2005), Particelle sospese PM2.5 -->
-
-<!-- pollutans of interest -->
-```{r}
-pollutans <- c("Biossido di Azoto", "Monossido di Azoto", "Ossidi di Azoto", "Biossido di Zolfo", "Monossido di Carbonio", "Ozono", "PM10 (SM2005)", "Particelle sospese PM2.5", "Benzene")
-```
-
-```{r}
-df <- df %>% filter(NomeTipoSensore %in% pollutans)
-```
-
+First we have gonna look on how the stations are distributed in the territory, the source stated that the sensors and the stations are distributed based on the density of population.
 
 
 <!-- small dataframe with only the stations and their location -->
 ```{r}
-station <- df %>% subset(select = c(Idstazione,lat,lng,Utm_Nord,UTM_Est,Quota)) %>% group_by(Idstazione) %>% summarise(lat = mean(lat), lng = mean(lng), Utm_Nord = mean(Utm_Nord),UTM_Est = mean(UTM_Est), Quota = mean(Quota))
+station <- df %>%
+  subset(select = c(IdStation,lat,lng,Altitude)) %>% 
+  group_by(IdStation) %>% 
+  summarise(lat = mean(lat), 
+            lng = mean(lng), 
+            Altitude = mean(Altitude))
 ```
 
-<!-- api key for using stadia maps -->
 
+To retrieve the map it will be used Stadia, because it can be used for free and it doesn't need to enter a credit card to obtain an api key.
+
+
+<!-- api key for using stadia maps -->
 ```{r}
 api_key <- readLines("stadia_key.txt")
 register_stadiamaps(api_key, write = FALSE)
 ```
 
+Then the station are plotted on the map 
 
 <!-- plot the station on a map -->
 ```{r}
-qmplot(x=lng,y=lat,data = station, source = "stadia",maptype = "stamen_toner_lite", color = I("red"))
+qmplot(x=lng,y=lat,data = station, source = "stadia",maptype = "alidade_smooth", color = I("red"))
 ```
+
+
+```{r}
+bb <- getbb("Lombardia")
+map <- get_stadiamap(bbox = c(bb[1,1],bb[2,1],bb[1,2],bb[2,2]), maptype = "alidade_smooth")
+```
+
 
 ```{r}
 p <- ggmap(map) + 
   geom_density_2d_filled(data = station, 
-                         aes(x=lng, y=lat, alpha = 0.3))
+                         aes(x=lng, y=lat, alpha = 0.3)) +
+  theme(legend.position = "none")
 p
 ggsave("./image/stations_desnity.png", plot=p, width=13, height=7, dpi=300)
 ```
 
-<!-- piechart of the various pollutants readings and sensors -->
+
+As we can see, like stated by the source, the stations are located near towns and more in general close to more populated areas, like Milan, Brescia, Bergamo, etc.  
+
+Then we are gonna check the number of sensors for each pollutant
+
+
+<!-- pie chart of the various pollutants readings and sensors -->
 ```{r}
 sensor_count <- df_stations %>% 
-  group_by(NomeTipoSensore) %>%  
-  filter(NomeTipoSensore %in% pollutans & IdSensore %in% df$IdSensore) %>% 
+  group_by(Type) %>%  
+  filter(Type %in% pollutans & IdSensor %in% df$IdSensor) %>% 
   summarise(n = n())
 
 total <- sum(sensor_count$n)
@@ -296,7 +515,7 @@ sensor_count$perc <- sensor_count$n / total
 sensor_count$perc <- sprintf("%1.2f%%", 100*sensor_count$perc)
   
 
-ggplot(sensor_count, aes(x="", y=n, fill=NomeTipoSensore)) +
+ggplot(sensor_count, aes(x="", y=n, fill=Type)) +
   geom_bar(stat="identity", width=1, color="white") +
   coord_polar("y", start=0) +
   geom_text(aes(label = perc), position = position_stack(vjust=0.5)) +
@@ -304,48 +523,52 @@ ggplot(sensor_count, aes(x="", y=n, fill=NomeTipoSensore)) +
 ```
 
 
+In the graph it's possible to see how the majority the number of sensor are equally distributed all ranging from the 15% to the 6%. The big exceptions are the Nitrogen Dioxide/Oxides that stands above and the Nitrogen Monoxide that has far less sensor.
+
+Then the number of readings for each pollutant, in this case we will expect to have less readings for the PM10 and the PM2.5, this because for both there's only one record a day that represents the daily mean, the others have it hourly.
+
 
 ```{r}
-raeadings_count <- df %>% 
-  group_by(NomeTipoSensore) %>% 
-  summarise(n = n())
-
+raeadings_count <- df %>%
+ group_by(Type) %>%
+ summarise(n = n())
 total <- sum(raeadings_count$n)
-  
 raeadings_count$perc <- raeadings_count$n / total
 raeadings_count$perc <- sprintf("%1.2f%%", 100*raeadings_count$perc)
-  
-
-p <- ggplot(raeadings_count, aes(x="", y=n, fill=NomeTipoSensore)) + 
-  geom_bar(stat="identity", width=1, color="white") +
-  coord_polar("y", start=0) +
-  geom_text(aes(label = perc), position = position_stack(vjust=0.5)) +
-  theme_void()
-
+p <- ggplot(raeadings_count, aes(x="", y=n, fill=Type)) +
+ geom_bar(stat="identity", width=1, color="white") +
+ coord_polar("y", start=0) +
+ geom_text(aes(label = perc), position = position_stack(vjust=0.5)) +
+ theme_void()
 p
-
-ggsave("readings_count_pie.png", plot=p, width=7.5, height=5, dpi=150)
-```
-```{r}
-df$Dates <- df$Dates %>% as.Date()
+ggsave("./image/readings_count_pie.png", plot=p, width=7.5, height=5, dpi=150)
 ```
 
 
-```{r}
-df$Year <- df$Dates %>% format("%Y")
+Like stated before, PM10 and PM2.5 have less rilevations, due to the frequency of feedback different from the others. The other one that is behind is the Nitrogen Monoxide, and this is due to the lower number of sensors, seen in the previous graph.
 
-df$Month <- df$Dates %>% format("%m")
+The remaining are not too far from each other, with the only exception of Nitrogen Dioxide/Oxides that are a bit higher at 25% each, due to the higher number of sensors.
 
-df$DayOfTheWeek <- df$Dates %>% weekdays()
+## Studing the averages
+
+Now we are gonna study how the concentration of each pollutants varies from different points of view, the code utilized for each of it is very similar, so it will be displayed only in the first experiment.
+
+The first in consideration is how the levels varies between the years, from the 2018 to the 2023 
+
+
+```{r, include=FALSE}
+df <- read.csv("./datasets/cleaned_df.csv")
 ```
+
 
 <!-- annual averages -->
 ```{r}
 annual_averages <- df %>% 
-  subset(select = c(NomeTipoSensore,Valore,Year)) %>% 
+  subset(select = c(Type,Value,Year)) %>% 
   filter(Year < 2024) %>%
-  pivot_wider(names_from = NomeTipoSensore, values_from = Valore, values_fn = mean)
+  pivot_wider(names_from = Type, values_from = Value, values_fn = mean)
 ```
+
 
 ```{r}
 years <- 2018:2023
@@ -357,21 +580,34 @@ mtab$Year = factor(mtab$Year, levels=c(years))
 p <- ggplot(data=mtab, aes(x=Year, y=value, fill=Year)) + 
   geom_bar(stat="identity") +
   scale_fill_viridis_d() +
-  facet_wrap(vars(variable),scales = "free_y")
+  facet_wrap(vars(variable),scales = "free_y") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) 
 
-ggsave("faceted_barplot.png", plot=p, width=7.5, height=5, dpi=150)
+p
+ggsave("./image/years.png", plot=p, width=7.5, height=5, dpi=150)
 ```
 
+From the graph it's possible to see that there were some strange behavior with the nitrogen monoxide, that has two sudden drops in the 2018 and in the 2020. Probably this is not due to the pandemic, because it is not only related to the 2020, but more likely caused by some problem with the stations or the sensors.
+
+For what concern the other pollutants are in slight decrease, like the nitrogen dioxide or the sulfur dioxides, others, for example the PM10 and PM2.5, remain fairly stationary, with particular peaks in the 2022.
+
+It's interesting to see how the pandemic didn't impact the level for none of the pollutants. 
+
+
+There was also some data from the 2024, but they are related only for one day, this because the rilevations reach as far as the 2024-01-01 so for this test they got excluded. 
+
+Secondly for each month, in this case all the data were used.
+
 <!-- month averages -->
-```{r}
+```{r, echo=FALSE}
 month_averages <- df %>% 
-  subset(select = c(NomeTipoSensore,Valore,Month)) %>% 
-  pivot_wider(names_from = NomeTipoSensore, values_from = Valore, values_fn = mean)
+  subset(select = c(Type,Value,Month)) %>% 
+  pivot_wider(names_from = Type, values_from = Value, values_fn = mean)
 
 month_averages$Month <- as.integer(month_averages$Month)
 ```
 
-```{r}
+```{r, echo=FALSE}
 months <- 1:12
 month_averages <- setDT(month_averages)
 mtab = melt(month_averages, id.vars="Month")
@@ -381,21 +617,25 @@ mtab$Month = factor(mtab$Month, levels=c(months))
 p <- ggplot(data=mtab, aes(x=Month, y=value, fill=Month)) + 
   geom_bar(stat="identity") +
   scale_fill_viridis_d() +
-  facet_wrap(vars(variable),scales = "free_y")
+  facet_wrap(vars(variable),scales = "free_y") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) 
 
+p
 ggsave("months.png", plot=p, width=7.5, height=5, dpi=150)
 ```
 
 
+As we can see here some of the pollutants have a similar behavior, they have an higher concentration during the winter months, and a lower one during the summer. The exceptions are the Nitrogen Monoxide and the Ozone that has an opposite behavior respect the other, with an higher concentration during the summer.
+
 <!-- day averages -->
-```{r}
+```{r, echo=FALSE}
 day_averages <- df %>% 
-  subset(select = c(NomeTipoSensore,Valore,DayOfTheWeek)) %>% 
-  pivot_wider(names_from = NomeTipoSensore, values_from = Valore, values_fn = mean)
+  subset(select = c(Type,Value,DayOfTheWeek)) %>% 
+  pivot_wider(names_from = Type, values_from = Value, values_fn = mean)
 
 ```
 
-```{r}
+```{r, echo=FALSE}
 days <- day_averages$DayOfTheWeek
 day_averages <- setDT(day_averages)
 mtab = melt(day_averages, id.vars="DayOfTheWeek")
@@ -403,117 +643,55 @@ mtab = melt(day_averages, id.vars="DayOfTheWeek")
 mtab$DayOfTheWeek = factor(mtab$DayOfTheWeek, levels=c(days))
 
 p <- ggplot(data=mtab, aes(x=DayOfTheWeek, y=value, fill=DayOfTheWeek)) + 
-  geom_bar(stat="identity")
+  geom_bar(stat="identity") +
   scale_fill_viridis_d() +
-  facet_wrap(vars(variable),scales = "free_y")
+  facet_wrap(vars(variable),scales = "free_y") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) 
 
+p
 ggsave("days.png", plot=p, width=7.5, height=5, dpi=150)
 ```
 
+From the graph we can see that the concentration of the pollutants it's not effected to much from the day of the week, it remains fairly constant for all days of the week. The only exceptions seems to be those related to nitrogen and PM2.5/10, with values lower during the weekends.
+
+One explanation for the lower levels at weekends could be less traffic caused by people entering and leaving work.
+
 <!-- hour averages -->
-```{r}
+```{r, echo=FALSE}
 hours <- 0:23
 hour_averages <- df %>% 
-  subset(select = c(NomeTipoSensore,Valore,Times)) %>% 
-  pivot_wider(names_from = NomeTipoSensore, values_from = Valore, values_fn = mean)
+  subset(select = c(Type,Value,Time)) %>% 
+  pivot_wider(names_from = Type, values_from = Value, values_fn = mean)
 
 ```
 
-```{r}
+```{r, echo=FALSE}
 hour_averages <- setDT(hour_averages)
-mtab = melt(hour_averages, id.vars="Times")
+mtab = melt(hour_averages, id.vars="Time")
 
-mtab$Times = factor(mtab$Times, levels=c(hours))
+mtab$Time = factor(mtab$Time, levels=c(hours))
 
-p <- ggplot(data=mtab, aes(x=Times, y=value, fill=Times)) + 
+p <- ggplot(data=mtab, aes(x=Time, y=value, fill=Time)) + 
   geom_bar(stat="identity") +
   scale_fill_viridis_d() +
-  facet_wrap(vars(variable),scales = "free_y")
-
+  facet_wrap(vars(variable),scales = "free_y") +
+  theme(axis.text.x = element_blank())
 p
 ggsave("hours.png", plot=p, width=13, height=7, dpi=150)
 ```
 
-<!-- averages for each province -->
-```{r}
-provinces <- unique(df$Provincia)
-provinces_averages <- df %>% 
-  subset(select = c(NomeTipoSensore,Valore,Provincia)) %>% 
-  pivot_wider(names_from = NomeTipoSensore, values_from = Valore, values_fn = mean)
+First of all in the graph of the PM10 and PM2.5 there are only the the value related the midnight because, like stated from the source, their sensor communicate only the mean in the entire day, so it's correct to see the graph like that and unfortunately it's not possible to see how their level varies trough the day.
 
-```
+For the other pollutants it's possible to notice how in general for all of them, the concentration during the night is lower, and for some of them, like the Nitrogen Dioxide/Oxides, the Benzene and the Carbon Monoxide, we can see some high spikes in the 6-8 and in the 18-20. These bands coincide with the time of arrival and departure from work and probably are related with that and the heavier traffic in that hours. This may reconfirm what was seen in the previous example.
 
-```{r}
-provinces_averages <- setDT(provinces_averages)
-mtab = melt(provinces_averages, id.vars="Provincia")
-
-mtab$Provincia = factor(mtab$Provincia, levels=c(provinces))
-
-p <- ggplot(data=mtab, aes(x=Provincia, y=value, fill=Provincia)) + 
-  geom_bar(stat="identity") +
-  scale_fill_viridis_d() +
-  facet_wrap(vars(variable),scales = "free_y")
-
-p
-ggsave("./image/provinces.png", plot=p, width=13, height=7, dpi=150)
-```
-<!-- temporal evolution -->
-```{r}
-value_means <- function(df, pollutan){
-  temp <- filter(df,df$NomeTipoSensore == pollutan)
-  temp <- temp %>% subset(select = c(Dates,Valore)) %>% group_by(Dates) %>% summarise(value = mean(Valore))
-  return(temp)
-}
-```
-
-```{r}
-for (c in pollutans){
-  temp <- value_means(df,c)
-  p <- ggplot(temp) + 
-    aes(x=Dates, y=value, title(c)) +
-    geom_line(color = "red") +
-    geom_smooth()
-  path <- paste("./image/",gsub(" ","",c),".png",sep="")
-  ggsave(path, plot=p, width=20, height=10, dpi=150)
-}
-```
-
-<!-- check the most polluted city -->
-```{r}
-cities <- unique(df$Comune)
-cities_averages <- df %>% 
-  subset(select = c(NomeTipoSensore,Valore,Comune)) %>% 
-  pivot_wider(names_from = NomeTipoSensore, values_from = Valore, values_fn = mean)
-
-```
-
-<!-- top 10 foreach pollutans -->
-```{r}
-for (c in pollutans){
-  temp <- df %>% 
-    subset(select = c(NomeTipoSensore,Valore,Comune)) %>% 
-    filter(NomeTipoSensore == c) %>%
-    group_by(Comune) %>%
-    summarise(average = mean(Valore)) %>%
-    arrange(desc(average)) %>%
-    head(10)
-  
-  p <- ggplot(temp) +
-    aes(x=factor(Comune, level=c(Comune)), y=average, fill = Comune) +
-    geom_bar(stat="identity") +
-    scale_fill_viridis_d() +
-    ggtitle(c) +
-    theme(plot.title = element_text(hjust = 0.5))
-  path <- paste("./image/top_10_",gsub(" ","",c),".png",sep="")
-  ggsave(path, plot=p, width=20, height=10, dpi=150)
-}
-```
-
+## Studing the altitude
 <!-- checking the altitude -->
+
+Now we will take in consideration the altitude of the sensor. For this first of all, to simplify the work, we are gonna add a new feature that approximate the altitude into a specific band. For example if a sensor is at between the 0 and 50 meter above the sea the value 50 will be assigned.
 
 <!-- mapping the altitude into bands so it easier to plot -->
 ```{r}
-df$Aprx_altitude <- df$Quota %>% {case_when(. > 0 & . < 50 ~ 50,
+df$Aprx_altitude <- df$Altitude %>% {case_when(. > 0 & . < 50 ~ 50,
                                    . > 50 & . < 100 ~ 100,
                                    . > 100 & . < 150 ~ 150,
                                    . > 150 & . < 200 ~ 200,
@@ -522,11 +700,15 @@ df$Aprx_altitude <- df$Quota %>% {case_when(. > 0 & . < 50 ~ 50,
                                    . > 400 ~ 1000)}
 ```
 
+
+Then the graph of the averages is create like in the previous examples. 
+
+
 ```{r}
 altitudes <- c(50,100,150,200,300,400,1000)
 altitudes_average <- df %>% 
-  subset(select = c(NomeTipoSensore,Valore,Aprx_altitude)) %>% 
-  pivot_wider(names_from = NomeTipoSensore, values_from = Valore, values_fn = mean)
+  subset(select = c(Type,Value,Aprx_altitude)) %>% 
+  pivot_wider(names_from = Type, values_from = Value, values_fn = mean)
 
 ```
 
@@ -539,54 +721,32 @@ mtab$Aprx_altitude = factor(mtab$Aprx_altitude, levels=c(altitudes))
 p <- ggplot(data=mtab, aes(x=Aprx_altitude, y=value, fill=Aprx_altitude)) + 
   geom_bar(stat="identity") +
   scale_fill_viridis_d() +
-  facet_wrap(vars(variable),scales = "free_y")
+  facet_wrap(vars(variable),scales = "free_y") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
 
 p
 ggsave("image/Aprx_altitude.png", plot=p, width=13, height=7, dpi=300)
 ```
 
-<!-- heatmap -->
-```{r}
-prova <- df %>% 
-  filter(NomeTipoSensore == "Particelle sospese PM2.5") %>% 
-  subset(select = c(lat,lng,Valore) )
-```
+From the graph it's possible to see how in general higher is the altitude lower is the concentration of the pollutant, with the only exception of the Ozone that has the opposite trend, being more present at the higher altitudes. This s probably due to the lower number of people and factories in that locations. 
 
-```{r}
-bb <- getbb("Lombardia")
-map <- get_stadiamap(bbox = c(bb[1,1],bb[2,1],bb[1,2],bb[2,2]), maptype = "alidade_smooth")
-```
+## Pollutants level for provinces
 
-```{r}
-p <- ggmap(map) + 
-  geom_density_2d_filled(data = prova, 
-                         aes(x=lng, y=lat, alpha = 0.3))
+Now we will see how the various provinces are ranked with respect to each pollutant. This time, we will not use bar graphs but will plot the intensity of the values directly on the map.
 
-ggsave("prova.png", plot=p, width=13, height=7, dpi=300)
+First of all, as before, the averages for each pollutant will be calculated.
+
+
+<!-- averages for each province -->
+```{r}
+provinces <- unique(df$Province)
+provinces_averages <- df %>% 
+  subset(select = c(Type,Value,Province)) %>% 
+  pivot_wider(names_from = Type, values_from = Value, values_fn = mean)
 ```
 
 
-```{r}
-ggmap(map)
-```
-```{r}
-month_averages <- df %>% 
-  subset(select = c(NomeTipoSensore,Valore,Month)) %>% 
-  pivot_wider(names_from = NomeTipoSensore, values_from = Valore, values_fn = mean)
-
-month_averages$Month <- as.integer(month_averages$Month)
-
-months <- 1:12
-month_averages <- setDT(month_averages)
-mtab = melt(month_averages, id.vars="Month")
-
-mtab$Month = factor(mtab$Month, levels=c(months))
-```
-
-
-```{r}
-prova<- prova %>% mutate(across(c(lat, lng), round, digits = 4))
-```
+After that we download the map on which we are going to report the results, to do this we will use the data provided by GADM, from which we will download the map of Italy at level 2, i.e. with regional and provincial borders, from which we will then extract the map relating only to the Lombardy region.
 
 
 <!-- get the map -->
@@ -595,6 +755,9 @@ lombardy_region <- gadm(country = "Italy", level = 2, path = "./") %>%
   st_as_sf() %>%
   filter(NAME_1 == "Lombardia")
 ```
+
+For the sake of simplicity, let us add a column with the full names of the provinces to the averages dataset. This will enable us later on to combine the map with the pollutant information by province.
+
 <!-- adding the full name enabling the join -->
 ```{r}
 NAME_2 <- c("Milano",
@@ -613,63 +776,164 @@ NAME_2 <- c("Milano",
 provinces_averages$NAME_2 <- NAME_2
 ```
 
-```{r}
+
+```{r, results='hide'}
 map_with_value <- left_join(lombardy_region, provinces_averages, by = "NAME_2")
 
-for (c in pollutans){
+plot_list <- list()
+for (i in seq_along(pollutans)){
+   c <- pollutans[i]
    p <- ggplot(map_with_value) + 
-     geom_sf(aes(fill = map_with_value[[c]])) + 
+     geom_sf(aes(fill = .data[[c]])) + 
      scale_fill_gradient(low = "#a7b4e8",high = "#2e408c", name = c) + 
      ggtitle(c) + 
      theme(plot.title = element_text(hjust = 0.5))
-   
-   path <- paste("./image/map",gsub(" ","",c),".png",sep="")
-   ggsave(path, plot=p, dpi=300)
+   plot_list[[i]] <- p
 }
 
+#p <- grid.arrange(grobs=plot_list,ncol=3)
+#ggsave("image/map_region.png",width=15, height=10, plot=p, dpi=300)
 ```
+
+```{r, include=FALSE}
+p <- grid.arrange(grobs=plot_list,ncol=3)
+ggsave("image/map_region.png",width=15, height=10, plot=p, dpi=300)
+```
+
+![Provinces concentrations](./image/map_region.png){width=100%}
+
+
+As can be seen from the figure, the distributions per pollutant are very different from each other: First of all, not all provinces have measurements for all pollutants, for example, for Nitrogen Monoxide only two, and another interesting thing to note is that in general, defining which province is the most polluted (overall) is not easy, some have high values for certain pollutants and low values for others, the only one that might stand out from the others is the province of Milan.
+
+In general, however, we can see how most of the provinces, especially the southern ones, are affected by high values of PM10 and PM2.5 Suspended Particles, particularly in the province of Cremona. It is also interesting to see the Ozone situation, which is quite different from the others, with the province of Lecco being the most affected. 
+
+Finally, it can be seen that for Sulfur Dioxide the high values seem to be concentrated in a few provinces, namely Brescia, Mantua, Milan, Lodi, Pavia and Monza and Brianza. The remaining provinces seem to be far behind with much more restrained values.
+
+A more detailed study at municipal level would have been interesting: for example, the Province of Brescia covers a very large area, and the values probably change a lot from area to area. Unfortunately, however, with such a study the map would have become much more fragmented and difficult to read, but above all, the main problem lies in the limited number of sensors, as many of the municipalities would be without surveys.
+
+## Pollutans and temperature correlation
+
+From the previous graphs we have seen how the concentration of pollutants varies greatly as the time of year varies. Now we are going to take a closer look at these variations and temperature trends and see if the behavior is similar or if there may be correlations.
+
+To do this, however, only temperatures in the province of Milan in 2018 will be considered. The analysis will be confined to this area because not all data were available in the region's portal.
 
 https://dati.comune.milano.it/dataset/ds686-rilevazione-temperature-anno-2018
 
-<!-- load the dataset of Milan's temps and clean it -->
+We extract from the dataset only data for the province of Milan in 2018.
+
 ```{r}
-milan_temps <- read.csv("./datasets/milano_temps.csv", sep = ";", na.strings = " ")
-milan_temps <- drop_na(milano_temps)
-milan_temps$Media <- gsub(",", ".", milano_temps$Media)
-milan_temps$Media <- as.numeric(milano_temps$Media)
-milan_temps$Data.Ora <- as.Date(milano_temps$Data.Ora, format = "%d/%m/%Y %H:%M")
-milan_temps <- milano_temps %>% group_by(Data.Ora) %>% summarise(Media = mean(Media))
+milan_2018 <- df %>% filter(Date < "2019-01-01" & Province == "MI")
 ```
 
+After that, for each pollutant we go on to generate the two graphs, one related to the levels of the detections, and one related to the temperatures, and place them next to each other to see the possible similar behaviors.
 
 ```{r}
-milan_2018 <- df %>% filter(Dates < "2019/01/01" & Provincia == "MI")
+value_means <- function(df, pollutan){
+  temp <- filter(df,df$Type == pollutan)
+  temp <- temp %>% 
+    subset(select = c(Date,Value)) %>% # subset only the two column of interest
+    group_by(Date) %>% # group by the date
+    summarise(value = mean(Value)) # calculate the mean of each day
+  temp$Date <- as.Date(temp$Date)
+return(temp)
+}
 ```
 
 <!-- pollutants and the temperature plots side by side -->
-```{r}
+```{r, eval=FALSE, result='hide'}
 for (c in pollutans){
   temp <- value_means(milan_2018,c)
-  p <- ggplot(temp) + 
-    aes(x=Dates, y=value, title(c)) +
-    geom_line(color = "red") +
-    geom_smooth() +
-    ggplot(data = milano_temps,
-              aes(x=Data.Ora, y = Media, color = "green")) +
-    geom_smooth()
-  path <- paste("./image/",gsub(" ","",c),".png",sep="")
+  p_list <- list()
+  p1 <- ggplot(temp) + 
+    aes(x=Date, y=value, title(c)) +
+    geom_smooth(color = "red")+
+    ggtitle(c) +
+    theme(plot.title = element_text(hjust = 0.5))
+  p_list[[1]] <- p1
+  
+  p2 <- ggplot(milan_temps) +
+    aes(x=Data.Ora, y = Media) + 
+    geom_smooth(color="green") +
+    ggtitle("Temperature") +
+    theme(plot.title = element_text(hjust = 0.5))
+  p_list[[2]] <- p2
+  p <- grid.arrange(grobs=p_list,ncol=2)
+  path <- paste("./image/milan_",gsub(" ","",c),".png",sep="")
   ggsave(path, plot=p, width=20, height=10, dpi=150)
 }
 ```
 
+We will now look at some of the results as we basically saw from the previous graphs that there are two different behaviors.
+
+One is where the concentration increases during colder periods. An example is the Suspended Particles PM2.5
+
+```{r, echo=FALSE}
+knitr::include_graphics("./image/milan_PM2.5.png")
+```
+
+
+<!-- ![Pm2.5 graph](./image/milan_PM2.5.png) -->
+
+The other behavior that has been observed is that of ozone, which has higher concentrations in summer periods.
+
+```{r, echo=FALSE}
+knitr::include_graphics("./image/milan_Ozone.png")
+```
+
+<!-- ![Ozone graph](./image/milan_Ozone.png) -->
+
+<!--
+```{r, results=FALSE}
+
+plot_list <- list()
+for (i in seq_along(pollutans)){
+  c <- pollutans[i]
+  temp <- value_means(milan_2018,c)
+  p_list <- list()
+  p1 <- ggplot(temp) + 
+    aes(x=Date, y=value, title(c)) +
+    geom_smooth(color = "red")
+  p_list[[1]] <- p1
+  
+  p2 <- ggplot(milan_temps) +
+     aes(x=Data.Ora, y = Media) + 
+     geom_smooth(color="green")
+  p_list[[2]] <- p2
+  p <- grid.arrange(grobs=p_list,ncol=2)
+  plot_list[[i]] <- p
+}
+grid.arrange(grobs=plot_list,ncol=1)
+```
+-->
+
+As we can also see here as seen above most pollutants tend to decrease during periods when temperatures are higher, then opposite behavior during colder periods. One hypothesis then that could be made is therefore that one of the main polluting factors could be the heaters in homes and buildings in general. Another cause could be heavier traffic or industries and companies in higher productivity. This could explain the spike in winter periods and also the lack of decline during the pandemic period.
+
+The only exception is, as seen above, Ozone, which exhibits the opposite behavior, with a curve similar to that of temperature.
+
+## WHO guidelines and current situation
 <!-- annual and daily mean vs WHO guidelines -->
 
+Instead, we are now going to compare the data obtained with the guidelines and to the interim targets provided by the WHO in the updated document in 2021.
 
-<!-- PM2.5 recommended leve and target values -->
-```{r}
+Not all the pollutants previously considered will be present, but only those actually mentioned in the paper, in particular we will see: PM2.5, PM10, Carbon Monoxide, Nitrogen Dioxide and Sulfur Dioxide.
+
+Each graph will show in black the pollutant concentration trend and a series of levels (Interim) that constitute the intermediate targets to be reached, the last line of which (in green) relates to the AQG level, the level to be reached for public health safety.
+
+In general, a distinction is made between short-term and long-term exposure, so for each we will have two graphs, one relating to annual averages (long-term), and one relating to daily averages (short-term).
+
+We will also analyse in more detail the evolution of the various pollutants over time, as taken individually it will be easier to notice abnormal behavior or improvement/worsening.
+
+In the end, the code for each of these graphs is equivalent, so it will only be shown in the first case. Very simply, the averages calculated in previous studies will be reused, these values will then be shown together with the targets set by the WHO.
+
+
+### PM2.5
+
+
+<!-- PM2.5 recommended level and target values -->
+```{r pm25_annual}
 
 ggplot(annual_averages) +
-  aes(x=Year, y=`Particelle sospese PM2.5`, group = 1) +
+  aes(x=Year, y=`PM2.5`, group = 1) +
   geom_line() +
   geom_hline(aes(yintercept=35, linetype="Interim target 1"), color = "red", size = 1) +
   geom_hline(aes(yintercept=25, linetype="Interim target 2"), color = "orange", size = 1) +
@@ -683,14 +947,21 @@ ggplot(annual_averages) +
 
 ```
 
-```{r}
+Regarding PM2.5 Suspended Particles as you can see the situation has not changed too much since 2018 but seems to be slightly decreasing. As far as the achieved targets are concerned, we are still between second and third, still far from the final target to be reached.
+
+It is interesting to see how between 2019 and 2021 the levels dropped and remained more or less constant, then rose again in 2022, approaching the status of 2018, and finally falling again in 2023.
+
+This behavior is probably not due to covid, the higher emissions in 2022 could be an effect of the general post-epidemic reopening, but this would not motivate the lower levels already in 2019, nor the final lowering in 2023.
+
+
+```{r pm25_hours, echo=FALSE}
 averages <- df %>% 
-  filter(NomeTipoSensore == "Particelle sospese PM2.5") %>%
-  group_by(Dates) %>% 
-  summarise(mean = mean(Valore))
+  filter(Type == "PM2.5") %>%
+  group_by(Date) %>% 
+  summarise(mean = mean(Value))
 
 ggplot(averages) +
-  aes(x=Dates, y=mean, group = 1) +
+  aes(x=Date, y=mean, group = 1) +
   geom_line() +
   geom_hline(aes(yintercept=75, linetype="Interim target 1"), color = "red", size = 1) +
   geom_hline(aes(yintercept=50, linetype="Interim target 2"), color = "orange", size = 1) +
@@ -704,10 +975,14 @@ ggplot(averages) +
 
 ```
 
+Looking at the daily averages, however, we can see that: during the summer months, readings also reach below the AQG level, during the winter months, on the other hand, during peaks, even the fourth target is exceeded.
+
+### PM10
+
 <!-- PM10 recommended leve and target values -->
-```{r}
+```{r pm10_annual, echo=FALSE}
 ggplot(annual_averages) +
-  aes(x=Year, y=`PM10 (SM2005)`, group = 1) +
+  aes(x=Year, y=`PM10`, group = 1) +
   geom_line() +
   geom_hline(aes(yintercept=70, linetype="Interim target 1"), color = "red", size = 1) +
   geom_hline(aes(yintercept=50, linetype="Interim target 2"), color = "orange", size = 1) +
@@ -720,14 +995,19 @@ ggplot(annual_averages) +
   theme(plot.title = element_text(hjust = 0.5))
 ```
 
-```{r}
+For PM10 Suspended Particles, for annual values, the situation is similar to the previous one: in each year we are between the third and fourth target, with a small peak during 2022.
+
+Again, as before, one can see an anomalous behavior in 2022. One explanation for this peak could be the record drought recorded in that year. 2022 was the least rainy year since 1961, with the most marked anomalies being recorded in the north (-33% compared to the 1991-2020 climatological average) <https://www.isprambiente.gov.it/it/archivio/notizie-e-novita-normative/notizie-ispra/2023/07/caldo-record-e-siccita-nel-2022>. Low rainfall, therefore, could be one of the causes of the higher annual concentrations.
+
+
+```{r pm10_hours, echo=FALSE}
 averages <- df %>% 
-  filter(NomeTipoSensore == "PM10 (SM2005)") %>%
-  group_by(Dates) %>% 
-  summarise(mean = mean(Valore))
+  filter(Type == "PM10") %>%
+  group_by(Date) %>% 
+  summarise(mean = mean(Value))
 
 ggplot(averages) +
-  aes(x=Dates, y=mean, group = 1) +
+  aes(x=Date, y=mean, group = 1) +
   geom_line() +
   geom_hline(aes(yintercept=150, linetype="Interim target 1"), color = "red", size = 1) +
   geom_hline(aes(yintercept=100, linetype="Interim target 2"), color = "orange", size = 1) +
@@ -740,18 +1020,20 @@ ggplot(averages) +
   theme(plot.title = element_text(hjust = 0.5))
 ```
 
+In contrast to PM2.5, the situation here seems much more positive: the averages seem to be below the AQG level much more consistently throughout the year, with the exception of the peak periods where the fourth target is slightly exceeded. 
 
 
+### Carbon Monoxide
 
-<!-- CO recommended leve and target values -->
-```{r}
+<!-- CO recommended level and target values -->
+```{r co_hours, echo=FALSE}
 averages <- df %>% 
-  filter(NomeTipoSensore == "Monossido di Carbonio") %>%
-  group_by(Dates) %>% 
-  summarise(mean = mean(Valore))
+  filter(Type == "Carbon Monoxide") %>%
+  group_by(Date) %>% 
+  summarise(mean = mean(Value))
 
 ggplot(averages) +
-  aes(x=Dates, y=mean, group = 1) +
+  aes(x=Date, y=mean, group = 1) +
   geom_line() +
   geom_hline(aes(yintercept=7, linetype="Interim target 1"), color = "red", size = 1) +
   geom_hline(aes(yintercept=4, linetype="AQG level"), color = "green", size = 1) +
@@ -761,46 +1043,63 @@ ggplot(averages) +
   ylab(expression(mg/m^{3})) +
   theme(plot.title = element_text(hjust = 0.5))
 ```
-<!-- NO2 recommended level and target values -->
-```{r}
-ggplot(annual_averages) +
-  aes(x=Year, y=`Biossido di Azoto`, group = 1) +
-  geom_line() +
-  geom_hline(aes(yintercept=120, linetype="Interim target 1"), color = "red", size = 1) +
-  geom_hline(aes(yintercept=50, linetype="Interim target 2"), color = "blue", size = 1) +
-  geom_hline(aes(yintercept=25, linetype="AQG level"), color = "green", size = 1) +
-  scale_linetype_manual(name ="", values = c('dashed','dashed','dashed')) +
-  ggtitle("Recommended annual NO2 level") +
-  ylab(expression(µg/m^{3})) +
-  theme(plot.title = element_text(hjust = 0.5))
-```
-```{r}
-averages <- df %>% 
-  filter(NomeTipoSensore == "Biossido di Azoto") %>%
-  group_by(Dates) %>% 
-  summarise(mean = mean(Valore))
 
-ggplot(averages) +
-  aes(x=Dates, y=mean, group = 1) +
+With regard to Carbon Monoxide from the guidelines we only have indications of short-term values, and there is only a target value and the AQG level, in any case as can be seen from the graph above the situation is well below the WHO recommended levels, with a fairly constant behaviour over the years.
+
+### Nitrogen Dioxide
+
+<!-- NO2 recommended level and target values -->
+```{r no2_annual, echo=FALSE}
+ggplot(annual_averages) +
+  aes(x=Year, y=`Nitrogen Dioxide`, group = 1) +
   geom_line() +
   geom_hline(aes(yintercept=40, linetype="Interim target 1"), color = "red", size = 1) +
   geom_hline(aes(yintercept=30, linetype="Interim target 2"), color = "orange", size = 1) +
   geom_hline(aes(yintercept=20, linetype="Interim target 3"), color = "blue", size = 1) +
-  geom_hline(aes(yintercept=10, linetype="AQC level"), color = "green", size = 1) +
+  geom_hline(aes(yintercept=10, linetype="AQG level"), color = "green", size = 1) +
   scale_linetype_manual(name ="", values = c('dashed','dashed','dashed','dashed')) +
+  ggtitle("Recommended annual NO2 level") +
+  ylab(expression(µg/m^{3})) +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+For Nitrogen Dioxide, on the other hand, the situation seems to be improving slightly: we are still between the second and third target, but the trend from 2018 seems to be decreasing slightly, getting closer and closer to the third target.
+
+Here the anomalous behavior seen with PM2.5 and PM10 does not seem to recur, on the contrary a slight improvement over the previous year can be seen. On the other hand, it is interesting to see the negative peak recorded in 2020, this could be attributable to the pandemic, as the reduction compared to the previous year is considerable and is confined to the year 2020, the one most affected by the restrictions.
+
+
+```{r no2_hours, echo=FALSE}
+averages <- df %>% 
+  filter(Type == "Nitrogen Dioxide") %>%
+  group_by(Date) %>% 
+  summarise(mean = mean(Value))
+
+ggplot(averages) +
+  aes(x=Date, y=mean, group = 1) +
+  geom_line() +
+  geom_hline(aes(yintercept=120, linetype="Interim target 1"), color = "red", size = 1) +
+  geom_hline(aes(yintercept=50, linetype="Interim target 2"), color = "orange", size = 1) +
+  geom_hline(aes(yintercept=25, linetype="AQC level"), color = "green", size = 1) +
+  scale_linetype_manual(name ="", values = c('dashed','dashed','dashed')) +
   ggtitle("Recommended short-term (24-hour) NO2 level") +
   ylab(expression(µg/m^{3})) +
   theme(plot.title = element_text(hjust = 0.5))
 ```
+
+From the point of view of daily values, however, we are always below target, even during peak periods, and during the summer months below the AQG level. Even a slight improvement can be seen, a slight downward trend.
+
+
+### Sulfur Dioxide
+
 <!-- SO2 recommended level and target values -->
-```{r}
+```{r so2_hours, echo=FALSE}
 averages <- df %>% 
-  filter(NomeTipoSensore == "Biossido di Zolfo") %>%
-  group_by(Dates) %>% 
-  summarise(mean = mean(Valore))
+  filter(Type == "Sulfur Dioxide") %>%
+  group_by(Date) %>% 
+  summarise(mean = mean(Value))
 
 ggplot(averages) +
-  aes(x=Dates, y=mean, group = 1) +
+  aes(x=Date, y=mean, group = 1) +
   geom_line() +
   geom_hline(aes(yintercept=125, linetype="Interim target 1"), color = "red", size = 1) +
   geom_hline(aes(yintercept=50, linetype="Interim target 2"), color = "orange", size = 1) +
@@ -811,9 +1110,16 @@ ggplot(averages) +
   theme(plot.title = element_text(hjust = 0.5))
 ```
 
+As far as Sulfur Dioxide is concerned, again only daily values are given and as can be seen, the situation is always well below the target values and also well below the AQG level.
 
 
 # Conclusions
 
+As we have seen, especially from the latest graphs, there is still a lot of work to be done with regard to air quality in the Lombardy region, especially with regard to particulate emissions, which, in some case, are still far from the levels recommended for public health.
+
+It was interesting to see how, unexpectedly, the covid and pandemic months did not affect emission levels so markedly, except for Nitrogen Dioxide, despite periods of lockdown or limited mobility. One explanation for this could be the limited duration of these periods, we are talking in any case of a few months of total shutdown, in which some companies and activities remained active. Another explanation is that these emissions could also be linked to other factors, such as heating. In fact, the permanence of the population at home during those months could have contributed to a greater use of heaters and thus to a partial reduction in emissions due to the decrease in traffic.
+Proof of this is also the fact that the most severe lockdown periods, with the greatest restrictions, were the six winter months, also due to a greater transmissibility of the disease during those periods.
+
+It would then have been interesting to compare the data with other data prior to 2018, extend this study, 5 years is a short time to see significant changes, barring significant events, with a larger time interval it would have been more interesting and more meaningful to see the evolution of emissions.
 
 
